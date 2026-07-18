@@ -1372,7 +1372,25 @@ body {
   }
   
   .dashboard-option {
-    height: 280px;
+    height: auto !important;
+    padding: 35px 24px !important;
+    gap: 16px !important;
+  }
+
+  .dashboard-option h3 {
+    font-size: 26px !important;
+    margin-bottom: 0 !important;
+  }
+
+  .dashboard-option p {
+    font-size: 14px !important;
+    margin-bottom: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .card-icon {
+    font-size: 48px !important;
+    margin-bottom: 0 !important;
   }
   
   .auth-features {
