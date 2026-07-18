@@ -104,7 +104,7 @@ body {
 
 /* Pseudo-element containing the active color gradient for a silky smooth 5-second fade */
 .logo-icon::before {
-  content: "🗲";
+  content: "⚡";
   position: absolute;
   top: 0;
   left: 0;
