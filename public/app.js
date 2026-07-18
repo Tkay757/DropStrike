@@ -1,0 +1,1735 @@
+// DropFlow - Core Client-Side Logic
+let socket;
+let currentUser = null;
+let currentRole = null; // 'sender' or 'receiver'
+let activePin = null;
+let selectedFile = null;
+let selectedFiles = [];
+let currentFileIndex = 0;
+let completedFilesBytes = 0;
+let totalFilesSize = 0;
+let senderOffset = 0;
+
+// WebRTC State Variables
+let peerConnection = null;
+let dataChannel = null;
+let receivedChunks = [];
+let receivedSize = 0;
+let fileMetadata = null;
+
+// Transfer Rate Tracking
+let transferStartTime = null;
+let speedInterval = null;
+let countdownInterval = null;
+
+// WebRTC ICE Candidate Queue (avoids race condition candidate loss)
+let iceQueue = [];
+let isRemoteDescSet = false;
+let pendingClientSocketId = null;
+
+// Configuration
+const CHUNK_SIZE = 16384; // 16KB
+const BUFFER_THRESHOLD = 1048576; // 1MB
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }
+  ],
+  iceCandidatePoolSize: 10
+};
+
+// UI Element Mapping
+const panels = {
+  dashboard: document.getElementById('panel-dashboard'),
+  sender: document.getElementById('panel-sender'),
+  receiver: document.getElementById('panel-receiver')
+};
+
+const views = {
+  // Sender sub-steps
+  sendSelect: document.getElementById('send-step-select'),
+  sendSettings: document.getElementById('send-step-settings'),
+  sendDashboard: document.getElementById('send-step-dashboard'),
+  // Receiver sub-steps
+  receivePin: document.getElementById('receive-step-pin'),
+  receiveNegotiate: document.getElementById('receive-step-negotiate'),
+  receiveTransfer: document.getElementById('receive-step-transfer')
+};
+
+// Helper: Show specific panel
+function showPanel(panelId) {
+  Object.keys(panels).forEach(key => {
+    const el = panels[key];
+    if (!el) return;
+    
+    if (key === panelId) {
+      el.classList.remove('hidden');
+      el.classList.add('panel-active');
+    } else {
+      el.classList.add('hidden');
+      el.classList.remove('panel-active');
+    }
+  });
+}
+
+// Helper: Show modern dynamic toast notifications
+function showNotification(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast-card ${type}`;
+
+  let icon = 'ℹ️';
+  if (type === 'success') icon = '✅';
+  if (type === 'error') icon = '⚠️';
+
+  toast.innerHTML = `
+    <span class="toast-icon">${icon}</span>
+    <span class="toast-text">${escapeHtml(message)}</span>
+  `;
+
+  container.appendChild(toast);
+
+  // Trigger animation after brief timeout
+  setTimeout(() => {
+    toast.classList.add('show');
+  }, 10);
+
+  // Auto remove after 5 seconds
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => {
+      toast.remove();
+    }, 400);
+  }, 5000);
+}
+
+// Helper: Show specific sub-step in a panel
+function showSubStep(viewElement, siblingElements) {
+  siblingElements.forEach(el => el.classList.add('hidden'));
+  viewElement.classList.remove('hidden');
+}
+
+// Helper: Format bytes to human readable
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Initialize socket connection
+function initSocket() {
+  if (socket) return;
+  
+  socket = io();
+
+  // Socket: Peer joined my room (I am the sender)
+  socket.on('peer-connected', async ({ receiverProfile }) => {
+    console.log('Receiver joined room:', receiverProfile);
+    
+    // Render receiver profile on sender dashboard
+    document.getElementById('receiver-dash-name').innerText = receiverProfile.name;
+    document.getElementById('receiver-dash-email').innerText = receiverProfile.email;
+    document.getElementById('receiver-dash-avatar').src = receiverProfile.picture || 'https://via.placeholder.com/50';
+    
+    const badge = document.getElementById('receiver-download-badge');
+    badge.innerText = 'Connecting';
+    badge.className = 'receiver-download-status-badge'; // reset class
+    
+    document.getElementById('receiver-download-pct').innerText = '0%';
+    document.getElementById('receiver-download-progress-fill').style.width = '0%';
+    document.getElementById('receiver-download-text').innerText = 'Establishing P2P link...';
+
+    // Toggle right column visibility
+    document.getElementById('receiver-placeholder').classList.add('hidden');
+    document.getElementById('receiver-active-card').classList.remove('hidden');
+
+    // Host initializes RTC connection and data channel
+    await initializeRtcConnection(true);
+  });
+
+  // Socket: Peer join request (I am the sender, waiting for approval)
+  socket.on('peer-join-request', ({ clientSocketId, receiverProfile }) => {
+    console.log('Received join request from:', receiverProfile.name, clientSocketId);
+    pendingClientSocketId = clientSocketId;
+
+    // Render details in the request card
+    document.getElementById('request-receiver-name').innerText = receiverProfile.name;
+
+    // Transition panels
+    document.getElementById('receiver-placeholder').classList.add('hidden');
+    document.getElementById('receiver-active-card').classList.add('hidden');
+    document.getElementById('receiver-request-card').classList.remove('hidden');
+  });
+
+  // Socket: Peer join request canceled (I am the sender, client disconnected)
+  socket.on('peer-join-canceled', ({ clientSocketId }) => {
+    console.log('Peer join request canceled by client:', clientSocketId);
+    if (pendingClientSocketId === clientSocketId) {
+      pendingClientSocketId = null;
+      document.getElementById('receiver-request-card').classList.add('hidden');
+      document.getElementById('receiver-placeholder').classList.remove('hidden');
+    }
+  });
+
+  // Socket: Join request approved by host (I am the receiver)
+  socket.on('join-approved', async ({ roomId, senderProfile, roomName }) => {
+    console.log('Join request approved by host. RoomID:', roomId);
+
+    // Render sender profile details
+    document.getElementById('sender-name').innerText = senderProfile.name;
+    document.getElementById('sender-email').innerText = senderProfile.email;
+    document.getElementById('sender-avatar').src = senderProfile.picture || 'https://via.placeholder.com/50';
+
+    // Render Room Name if available
+    const roomTitleCard = document.getElementById('receiver-room-title-card');
+    const roomNameEl = document.getElementById('receiver-room-name');
+    if (roomTitleCard && roomNameEl && roomName) {
+      roomNameEl.innerText = roomName;
+      roomTitleCard.style.display = 'block';
+    } else if (roomTitleCard) {
+      roomTitleCard.style.display = 'none';
+    }
+
+    // Unhide sender identity card and update status text
+    document.getElementById('sender-identity-card').classList.remove('hidden');
+    document.getElementById('receiver-connection-status').innerText = 'Approved! Establishing P2P negotiation...';
+
+    // Negotiate parameters and transition step
+    showSubStep(views.receiveNegotiate, [views.receivePin, views.receiveTransfer]);
+  });
+
+  // Socket: Join request rejected by host (I am the receiver)
+  socket.on('join-rejected', ({ reason }) => {
+    console.log('Join request rejected by host. Reason:', reason);
+    resetTransferState();
+
+    // Go back to input screen and render error message
+    showSubStep(views.receivePin, [views.receiveNegotiate, views.receiveTransfer]);
+    const errorMsgEl = document.getElementById('receive-error-msg');
+    errorMsgEl.innerText = reason || 'Connection rejected by host.';
+    errorMsgEl.classList.remove('hidden');
+
+    // Reset PIN inputs
+    pinBoxes.forEach(box => { box.value = ''; });
+    pinBoxes[0].focus();
+  });
+
+  // Socket: Relay WebRTC signaling messages
+  socket.on('signal', async ({ signalData }) => {
+    console.log('[Signaling] Client received signalData:', signalData, 'peerConnection active:', !!peerConnection);
+    if (!peerConnection) return;
+    
+    try {
+      if (signalData.sdp) {
+        console.log('Received remote SDP description:', signalData.sdp.type);
+        if (currentRole === 'receiver') {
+          document.getElementById('receiver-connection-status').innerText = `Received SDP offer (${signalData.sdp.type}). Applying description...`;
+        } else {
+          document.getElementById('receiver-download-text').innerText = 'Received SDP answer. Establishing P2P link...';
+        }
+        
+        // Pass plain SDP object directly to setRemoteDescription (safest for cross-browser support)
+        await peerConnection.setRemoteDescription(signalData.sdp);
+        isRemoteDescSet = true;
+        
+        // Process any queued ICE candidates that arrived early
+        while (iceQueue.length > 0) {
+          const candidate = iceQueue.shift();
+          console.log('Processing queued ICE candidate');
+          try {
+            await peerConnection.addIceCandidate(candidate);
+          } catch (candidateErr) {
+            console.error('Failed to add queued candidate:', candidateErr);
+          }
+        }
+        
+        // If we received an offer, we must answer it
+        if (signalData.sdp.type === 'offer') {
+          if (currentRole === 'receiver') {
+            document.getElementById('receiver-connection-status').innerText = 'Generating SDP connection answer...';
+          }
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          
+          if (currentRole === 'receiver') {
+            document.getElementById('receiver-connection-status').innerText = 'SDP Answer generated. Relaying to sender...';
+          }
+          socket.emit('signal', { pin: activePin, signalData: { sdp: answer } });
+        }
+      } else if (signalData.ice) {
+        const candidate = signalData.ice;
+        if (isRemoteDescSet) {
+          console.log('Received remote ICE candidate');
+          try {
+            await peerConnection.addIceCandidate(candidate);
+          } catch (candidateErr) {
+            console.error('Failed to add candidate:', candidateErr);
+          }
+        } else {
+          console.log('Queueing remote ICE candidate (SDP not set yet)');
+          iceQueue.push(candidate);
+        }
+      }
+    } catch (err) {
+      console.error('Error handling signalling payload:', err);
+      if (currentRole === 'receiver') {
+        document.getElementById('receiver-connection-status').innerText = 'Signalling error: ' + err.message;
+      }
+    }
+  });
+
+  // Socket: Room expired
+  socket.on('room-expired', () => {
+    showNotification('The room has expired.', 'error');
+    resetTransferState();
+    showPanel('dashboard');
+  });
+
+  // Socket: Peer disconnected
+  socket.on('peer-disconnected', ({ reason }) => {
+    console.log('Peer disconnected:', reason);
+    
+    if (currentRole === 'sender') {
+      // Check if download was already completed
+      const pctEl = document.getElementById('receiver-download-pct');
+      const isCompleted = pctEl && pctEl.innerText === '100%';
+
+      // Clear WebRTC objects
+      if (dataChannel) {
+        dataChannel.close();
+        dataChannel = null;
+      }
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      receivedChunks = [];
+      receivedSize = 0;
+      
+      // Stop transfer speed tracking
+      stopSpeedTracker();
+      
+      // Reset UI elements on sender transfer view
+      document.getElementById('send-progress-fill').style.width = '0%';
+      document.getElementById('send-progress-pct').innerText = '0%';
+      document.getElementById('send-transfer-speed').innerText = '0 KB/s';
+      document.getElementById('send-time-remaining').innerText = 'Calculating...';
+      document.getElementById('send-bytes-meta').innerText = '0 MB / 0 MB';
+      
+      // Reset connected peer details (instantly makes their profile disappear)
+      document.getElementById('receiver-placeholder').classList.remove('hidden');
+      document.getElementById('receiver-active-card').classList.add('hidden');
+      
+      // Reset cancel button text if it was modified
+      const cancelBtn = document.getElementById('btn-cancel-send');
+      if (cancelBtn) {
+        cancelBtn.innerText = 'Cancel Transfer / Close Room';
+        cancelBtn.className = 'btn btn-danger btn-block';
+      }
+
+      // Suppress alert dialog if receiver downloaded successfully and exited naturally
+      if (!isCompleted) {
+        console.log(`Receiver disconnected: ${reason}. Keeping room open.`);
+      }
+    } else {
+      // Receiver side: exit to dashboard
+      resetTransferState();
+      showNotification(`Connection terminated: ${reason}`, 'error');
+      showPanel('dashboard');
+    }
+  });
+}
+
+// Initialize WebRTC Peer Connection
+async function initializeRtcConnection(isHost) {
+  peerConnection = new RTCPeerConnection(RTC_CONFIG);
+
+  // Bind WebRTC Diagnostic State Listeners
+  peerConnection.onsignalingstatechange = () => {
+    console.log('RTC Signaling State Change:', peerConnection.signalingState);
+    updateRtcStatesLog();
+  };
+  peerConnection.oniceconnectionstatechange = () => {
+    console.log('RTC ICE Connection State Change:', peerConnection.iceConnectionState);
+    updateRtcStatesLog();
+  };
+  peerConnection.onicegatheringstatechange = () => {
+    console.log('RTC ICE Gathering State Change:', peerConnection.iceGatheringState);
+    updateRtcStatesLog();
+  };
+
+  // Handle ICE Candidates exchange
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      console.log('Gathered local ICE candidate:', event.candidate.candidate);
+      socket.emit('signal', {
+        pin: activePin,
+        signalData: { ice: event.candidate }
+      });
+    } else {
+      console.log('Gathered local ICE candidate: gathering complete');
+    }
+  };
+
+  peerConnection.onconnectionstatechange = () => {
+    console.log('RTC Connection State Change:', peerConnection.connectionState);
+    updateRtcStatesLog();
+    
+    if (peerConnection.connectionState === 'connected') {
+      showNotification('P2P Link established! Transfer started.', 'success');
+    }
+    
+    if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+      if (currentRole === 'sender') {
+        // Clear WebRTC objects but stay in the room
+        if (dataChannel) {
+          dataChannel.close();
+          dataChannel = null;
+        }
+        if (peerConnection) {
+          peerConnection.close();
+          peerConnection = null;
+        }
+        receivedChunks = [];
+        receivedSize = 0;
+        stopSpeedTracker();
+
+        // Reset Left Column UI elements
+        document.getElementById('send-progress-fill').style.width = '0%';
+        document.getElementById('send-progress-pct').innerText = '0%';
+        document.getElementById('send-transfer-speed').innerText = '0 KB/s';
+        document.getElementById('send-time-remaining').innerText = 'Calculating...';
+        document.getElementById('send-bytes-meta').innerText = '0 MB / 0 MB';
+
+        // Reset right column connected peer view
+        document.getElementById('receiver-placeholder').classList.remove('hidden');
+        document.getElementById('receiver-active-card').classList.add('hidden');
+
+        // Reset cancel button text
+        const cancelBtn = document.getElementById('btn-cancel-send');
+        if (cancelBtn) {
+          cancelBtn.innerText = 'Cancel Transfer / Close Room';
+          cancelBtn.className = 'btn btn-danger btn-block';
+        }
+        console.log('WebRTC disconnected on sender. Resetting connection and keeping room open.');
+      } else {
+        // Receiver side: exit to dashboard
+        resetTransferState();
+        showNotification('P2P connection disconnected.', 'error');
+        showPanel('dashboard');
+      }
+    }
+  };
+
+  if (isHost) {
+    // SENDER: Create data channel
+    dataChannel = peerConnection.createDataChannel('fileTransfer', { ordered: true });
+    setupDataChannelEvents();
+
+    // Create SDP Offer
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    socket.emit('signal', {
+      pin: activePin,
+      signalData: { sdp: offer }
+    });
+  } else {
+    // RECEIVER: Listen for incoming data channel
+    peerConnection.ondatachannel = (event) => {
+      dataChannel = event.channel;
+      setupDataChannelEvents();
+    };
+  }
+}
+
+// Update UI text with actual WebRTC connection status properties for easy testing diagnostics
+function updateRtcStatesLog() {
+  if (!peerConnection) return;
+  const stateStr = `(SDP: ${peerConnection.signalingState} | ICE: ${peerConnection.iceConnectionState} | ICEGather: ${peerConnection.iceGatheringState})`;
+  
+  if (currentRole === 'sender') {
+    const el = document.getElementById('receiver-download-text');
+    if (el) {
+      el.innerText = `Establishing P2P link... ${stateStr}`;
+    }
+  } else {
+    const el = document.getElementById('receiver-connection-status');
+    if (el) {
+      el.innerText = `Connecting to room... ${stateStr}`;
+    }
+  }
+}
+
+// Setup RTC Data Channel Listeners
+function setupDataChannelEvents() {
+  if (!dataChannel) return;
+
+  dataChannel.onopen = () => {
+    console.log('WebRTC P2P Data Channel Opened!');
+    if (currentRole === 'sender') {
+      currentFileIndex = 0;
+      completedFilesBytes = 0;
+      senderOffset = 0;
+      startStreamingFile();
+    }
+  };
+
+  dataChannel.onclose = () => {
+    console.log('WebRTC Data Channel Closed.');
+    resetTransferState();
+  };
+
+  dataChannel.onerror = (err) => {
+    console.error('Data Channel Error:', err);
+  };
+
+  // Receive packets
+  dataChannel.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      // JSON Metadata / Controls
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'metadata') {
+          fileMetadata = message;
+          receivedChunks = [];
+          receivedSize = 0;
+          
+          // Render metadata on receive dashboard
+          document.getElementById('sender-meta-filename').innerText = `${fileMetadata.name} (${fileMetadata.fileIndex + 1}/${fileMetadata.totalFiles})`;
+          document.getElementById('sender-meta-filesize').innerText = formatBytes(fileMetadata.size);
+          document.getElementById('sender-identity-card').classList.remove('hidden');
+          
+          const transferTitle = document.querySelector('.transfer-title');
+          if (transferTitle) {
+            transferTitle.innerText = `Downloading (${fileMetadata.fileIndex + 1}/${fileMetadata.totalFiles}): ${fileMetadata.name}`;
+          }
+
+          // Switch receiver screen to transfer progress
+          showSubStep(views.receiveTransfer, [views.receivePin, views.receiveNegotiate]);
+          transferStartTime = Date.now();
+          if (!speedInterval) {
+            startSpeedTracker('receiver');
+          }
+        } else if (message.type === 'complete') {
+          finalizeReceivedFile();
+        } else if (message.type === 'all-complete') {
+          stopSpeedTracker();
+          const recTime = document.getElementById('receive-time-remaining');
+          if (recTime) recTime.innerText = 'Completed';
+          const recSpeed = document.getElementById('receive-transfer-speed');
+          if (recSpeed) recSpeed.innerText = '0 KB/s';
+          
+          // Change Cancel button to Done (Exit Room)
+          const cancelBtn = document.getElementById('btn-cancel-receive');
+          if (cancelBtn) {
+            cancelBtn.innerText = 'Done (Exit Room)';
+            cancelBtn.className = 'btn btn-accent btn-block';
+          }
+          
+          const transferTitle = document.querySelector('.transfer-title');
+          if (transferTitle) {
+            transferTitle.innerText = 'All Transfers Completed!';
+          }
+        } else if (message.type === 'receiver-progress') {
+          // Sender updates download progress of receiver
+          const badge = document.getElementById('receiver-download-badge');
+          badge.innerText = `Downloading (${currentFileIndex + 1}/${selectedFiles.length})`;
+          badge.className = 'receiver-download-status-badge status-downloading';
+
+          document.getElementById('receiver-download-pct').innerText = `${message.percentage}%`;
+          document.getElementById('receiver-download-progress-fill').style.width = `${message.percentage}%`;
+          document.getElementById('receiver-download-text').innerText = `Downloading file ${currentFileIndex + 1}/${selectedFiles.length}...`;
+        } else if (message.type === 'receiver-complete') {
+          // Mark current file status as complete in sender list
+          const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
+          if (statusEl) {
+            statusEl.innerText = 'Completed';
+            statusEl.className = 'file-item-status status-completed';
+          }
+
+          completedFilesBytes += selectedFiles[currentFileIndex].size;
+          currentFileIndex++;
+          senderOffset = 0;
+
+          // Start sending next file
+          startStreamingFile();
+        }
+      } catch (err) {
+        console.error('Failed to parse string command:', err);
+      }
+    } else {
+      // Binary File Chunk
+      const chunk = event.data;
+      receivedChunks.push(chunk);
+      receivedSize += chunk.byteLength;
+      
+      updateProgressBar('receiver', receivedSize, fileMetadata.size);
+
+      // Periodically report progress to sender
+      if (receivedChunks.length % 50 === 0 || receivedSize === fileMetadata.size) {
+        const pct = Math.min(100, Math.floor((receivedSize / fileMetadata.size) * 100));
+        try {
+          dataChannel.send(JSON.stringify({
+            type: 'receiver-progress',
+            percentage: pct
+          }));
+        } catch (e) {
+          console.error('Failed to send progress update:', e);
+        }
+      }
+    }
+  };
+}
+
+// SENDER: Stream active queued file in chunks
+function startStreamingFile() {
+  if (!selectedFiles || selectedFiles.length === 0 || !dataChannel) return;
+
+  if (currentFileIndex >= selectedFiles.length) {
+    console.log('Sender: Sent all file queue queues.');
+    try {
+      dataChannel.send(JSON.stringify({ type: 'all-complete' }));
+    } catch (e) {
+      console.error('Failed to send final complete packet:', e);
+    }
+    
+    // Set sender's final layout states
+    const badge = document.getElementById('receiver-download-badge');
+    badge.innerText = `Completed`;
+    badge.className = 'receiver-download-status-badge status-completed';
+
+    document.getElementById('receiver-download-pct').innerText = `100%`;
+    document.getElementById('receiver-download-progress-fill').style.width = `100%`;
+    document.getElementById('receiver-download-text').innerText = `Completed all downloads!`;
+    
+    const sendTime = document.getElementById('send-time-remaining');
+    if (sendTime) sendTime.innerText = 'Completed';
+    const sendSpeed = document.getElementById('send-transfer-speed');
+    if (sendSpeed) sendSpeed.innerText = '0 KB/s';
+    
+    const cancelBtn = document.getElementById('btn-cancel-send');
+    if (cancelBtn) {
+      cancelBtn.innerText = 'Done (Close Room)';
+      cancelBtn.className = 'btn btn-accent btn-block';
+    }
+    return;
+  }
+
+  const activeFile = selectedFiles[currentFileIndex];
+  console.log(`Sender: Streaming file ${currentFileIndex + 1}/${selectedFiles.length}: ${activeFile.name}`);
+
+  // Mark status as active sending
+  const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
+  if (statusEl) {
+    statusEl.innerText = 'Sending...';
+    statusEl.className = 'file-item-status status-active';
+  }
+
+  transferStartTime = Date.now();
+  if (!speedInterval) {
+    startSpeedTracker('sender');
+  }
+
+  // Send Metadata first
+  dataChannel.send(JSON.stringify({
+    type: 'metadata',
+    name: activeFile.name,
+    size: activeFile.size,
+    mime: activeFile.type,
+    fileIndex: currentFileIndex,
+    totalFiles: selectedFiles.length,
+    totalQueueSize: totalFilesSize
+  }));
+
+  let offset = 0;
+  senderOffset = 0;
+  const fileReader = new FileReader();
+
+  dataChannel.bufferedAmountLowThreshold = CHUNK_SIZE * 4;
+
+  const readNextChunk = () => {
+    if (dataChannel.readyState !== 'open') return;
+    if (offset >= activeFile.size) {
+      dataChannel.send(JSON.stringify({ type: 'complete', fileIndex: currentFileIndex }));
+      console.log(`Sender: Completed stream slice for ${activeFile.name}`);
+      
+      // Keep local progress bar at 100%
+      updateProgressBar('sender', activeFile.size, activeFile.size);
+      
+      // Mark current file row status
+      const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
+      if (statusEl) {
+        statusEl.innerText = 'Sent';
+        statusEl.className = 'file-item-status status-completed';
+      }
+      return;
+    }
+
+    const slice = activeFile.slice(offset, offset + CHUNK_SIZE);
+    fileReader.readAsArrayBuffer(slice);
+  };
+
+  fileReader.onload = (e) => {
+    if (dataChannel.readyState !== 'open') return;
+
+    const buffer = e.target.result;
+    dataChannel.send(buffer);
+    offset += buffer.byteLength;
+    senderOffset = offset;
+
+    updateProgressBar('sender', offset, activeFile.size);
+
+    if (offset < activeFile.size) {
+      if (dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
+        dataChannel.onbufferedamountlow = () => {
+          dataChannel.onbufferedamountlow = null;
+          readNextChunk();
+        };
+      } else {
+        setTimeout(readNextChunk, 1);
+      }
+    } else {
+      readNextChunk();
+    }
+  };
+
+  readNextChunk();
+}
+
+// RECEIVER: Combine binary chunks and download
+function finalizeReceivedFile() {
+  if (!fileMetadata || receivedChunks.length === 0) return;
+
+  // Send receiver-complete message back to sender before downloading
+  if (dataChannel && dataChannel.readyState === 'open') {
+    try {
+      dataChannel.send(JSON.stringify({ type: 'receiver-complete' }));
+    } catch (e) {
+      console.error('Could not send completion message:', e);
+    }
+  }
+  
+  // Merge chunks into one Blob and download
+  const fileBlob = new Blob(receivedChunks, { type: fileMetadata.mime });
+  const downloadUrl = URL.createObjectURL(fileBlob);
+  
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = fileMetadata.name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  
+  URL.revokeObjectURL(downloadUrl);
+  
+  // Increment completed files count receiver-side
+  completedFilesBytes += fileMetadata.size;
+}
+
+// Progress Bar & Stats Updates
+function updateProgressBar(role, currentBytes, totalBytes) {
+  const pct = Math.min(100, Math.floor((currentBytes / totalBytes) * 100));
+  const rolePrefix = role === 'sender' ? 'send' : 'receive';
+  const fillElement = document.getElementById(`${rolePrefix}-progress-fill`);
+  const pctElement = document.getElementById(`${rolePrefix}-progress-pct`);
+  const bytesElement = document.getElementById(`${rolePrefix}-bytes-meta`);
+
+  if (fillElement) fillElement.style.width = `${pct}%`;
+  if (pctElement) pctElement.innerText = `${pct}%`;
+  
+  // Render overall bytes transferred out of total queue size
+  const totalQueue = role === 'sender' ? totalFilesSize : (fileMetadata ? fileMetadata.totalQueueSize : totalBytes);
+  if (bytesElement) {
+    bytesElement.innerText = `${formatBytes(completedFilesBytes + currentBytes)} / ${formatBytes(totalQueue)}`;
+  }
+}
+
+// Track Transfer Speed & Estimations
+function startSpeedTracker(role) {
+  let prevBytes = 0;
+  const rolePrefix = role === 'sender' ? 'send' : 'receive';
+  
+  speedInterval = setInterval(() => {
+    if (!transferStartTime) return;
+    
+    const currentBytes = (role === 'sender') ? 
+      (peerConnection && dataChannel && selectedFiles.length > 0 ? getSenderOffset() : 0) : 
+      receivedSize;
+    
+    // Total transferred bytes including completed files
+    const totalTransferred = completedFilesBytes + currentBytes;
+    const elapsedSeconds = (Date.now() - transferStartTime) / 1000;
+    if (elapsedSeconds <= 0) return;
+
+    // Calculate current speed based on total transferred bytes
+    const bytesTransferredSinceLast = totalTransferred - prevBytes;
+    prevBytes = totalTransferred;
+    
+    const speed = bytesTransferredSinceLast;
+    const speedEl = document.getElementById(`${rolePrefix}-transfer-speed`);
+    if (speedEl) speedEl.innerText = `${formatBytes(speed)}/s`;
+
+    // Estimate remaining time for overall queue
+    const totalQueue = role === 'sender' ? totalFilesSize : (fileMetadata ? fileMetadata.totalQueueSize : currentBytes);
+    const remainingBytes = totalQueue - totalTransferred;
+    const timeEl = document.getElementById(`${rolePrefix}-time-remaining`);
+    if (timeEl) {
+      if (speed > 0) {
+        const remainingSeconds = Math.max(0, Math.ceil(remainingBytes / speed));
+        const m = Math.floor(remainingSeconds / 60);
+        const s = remainingSeconds % 60;
+        timeEl.innerText = m > 0 ? `${m}m ${s}s` : `${s}s`;
+      } else {
+        timeEl.innerText = 'Stalled';
+      }
+    }
+  }, 1000);
+}
+
+function stopSpeedTracker() {
+  if (speedInterval) {
+    clearInterval(speedInterval);
+    speedInterval = null;
+  }
+}
+
+// Helper to estimate sender offset
+function getSenderOffset() {
+  return senderOffset;
+}
+
+// Reset connections and speeds
+function resetTransferState() {
+  stopSpeedTracker();
+
+  // Reset pending state references
+  pendingClientSocketId = null;
+  const reqCard = document.getElementById('receiver-request-card');
+  if (reqCard) reqCard.classList.add('hidden');
+
+  // Notify signaling server that we are leaving the room before closing connection
+  if (socket && activePin) {
+    socket.emit('leave-room');
+  }
+
+  // Reset ICE queues
+  iceQueue = [];
+  isRemoteDescSet = false;
+
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+
+  const label = document.getElementById('dash-countdown-val');
+  if (label) label.innerText = '01:00';
+
+  const cancelBtn = document.getElementById('btn-cancel-send');
+  if (cancelBtn) {
+    cancelBtn.innerText = 'Cancel Transfer / Close Room';
+    cancelBtn.className = 'btn btn-danger btn-block';
+  }
+
+  const cancelReceiveBtn = document.getElementById('btn-cancel-receive');
+  if (cancelReceiveBtn) {
+    cancelReceiveBtn.innerText = 'Cancel Transfer';
+    cancelReceiveBtn.className = 'btn btn-danger btn-block';
+  }
+
+  // Reset Receiver UI progress stats
+  const recProgressFill = document.getElementById('receive-progress-fill');
+  if (recProgressFill) recProgressFill.style.width = '0%';
+  
+  const recProgressPct = document.getElementById('receive-progress-pct');
+  if (recProgressPct) recProgressPct.innerText = '0%';
+  
+  const recSpeed = document.getElementById('receive-transfer-speed');
+  if (recSpeed) recSpeed.innerText = '0 KB/s';
+  
+  const recTime = document.getElementById('receive-time-remaining');
+  if (recTime) recTime.innerText = 'Calculating...';
+  
+  const recBytes = document.getElementById('receive-bytes-meta');
+  if (recBytes) recBytes.innerText = '0 MB / 0 MB';
+  
+  const recStatus = document.getElementById('receiver-connection-status');
+  if (recStatus) recStatus.innerText = 'Connecting to room...';
+  
+  if (dataChannel) {
+    try {
+      dataChannel.close();
+    } catch (e) {}
+    dataChannel = null;
+  }
+  
+  if (peerConnection) {
+    try {
+      peerConnection.close();
+    } catch (e) {}
+    peerConnection = null;
+  }
+
+  receivedChunks = [];
+  receivedSize = 0;
+  fileMetadata = null;
+  selectedFile = null;
+  selectedFiles = [];
+  currentFileIndex = 0;
+  completedFilesBytes = 0;
+  totalFilesSize = 0;
+  activePin = null;
+
+  // Clear receiver lobbies list polling
+  if (lobbiesInterval) {
+    clearInterval(lobbiesInterval);
+    lobbiesInterval = null;
+  }
+
+  // Reset file input and selection card state
+  const fileInputEl = document.getElementById('file-input');
+  if (fileInputEl) fileInputEl.value = '';
+  const detailsEl = document.getElementById('file-details-card');
+  if (detailsEl) detailsEl.classList.add('hidden');
+  const layoutEl = document.getElementById('select-step-layout');
+  if (layoutEl) layoutEl.classList.remove('files-selected');
+
+  // Reset sender/receiver sub-step views to initial states to prevent page collisions
+  if (views.sendSelect) views.sendSelect.classList.remove('hidden');
+  if (views.sendSettings) views.sendSettings.classList.add('hidden');
+  if (views.sendDashboard) views.sendDashboard.classList.add('hidden');
+  if (views.receivePin) views.receivePin.classList.remove('hidden');
+  if (views.receiveNegotiate) views.receiveNegotiate.classList.add('hidden');
+  if (views.receiveTransfer) views.receiveTransfer.classList.add('hidden');
+
+  // Reset receiver nickname field
+  const nicknameEl = document.getElementById('receiver-nickname');
+  const nicknameContainer = document.querySelector('.nickname-container');
+  if (nicknameEl) {
+    nicknameEl.value = currentUser ? currentUser.name : '';
+    nicknameEl.style.borderColor = 'rgba(0, 0, 0, 0.1)';
+  }
+  if (nicknameContainer) {
+    nicknameContainer.style.display = currentUser ? 'none' : 'flex';
+  }
+
+  // Reset room configuration settings inputs
+  const configNameEl = document.getElementById('setting-room-name');
+  if (configNameEl) configNameEl.value = '';
+  
+  const configPersonEl = document.getElementById('setting-person-limit');
+  if (configPersonEl) configPersonEl.value = '2';
+  
+  const configExpiryEl = document.getElementById('setting-expiry-limit');
+  if (configExpiryEl) configExpiryEl.value = '1';
+
+  // Hide room headers on host dashboard
+  const roomTitleEl = document.getElementById('dash-room-title');
+  if (roomTitleEl) {
+    roomTitleEl.innerText = '';
+    roomTitleEl.style.display = 'none';
+  }
+
+  const peerCountEl = document.getElementById('dash-peer-count');
+  if (peerCountEl) {
+    peerCountEl.innerText = '';
+  }
+
+  // Revert emerald receiver or red sender theme to default indigo theme
+  document.body.classList.remove('receiver-active', 'sender-active');
+}
+
+// Start client-side countdown timer based on expiry minutes
+function startCountdownTimer(expiryMinutes) {
+  const label = document.getElementById('dash-countdown-val');
+  if (countdownInterval) clearInterval(countdownInterval);
+
+  let timeLeft = (expiryMinutes || 1) * 60; // minutes to seconds
+  if (label) {
+    label.innerText = `${(expiryMinutes || 1).toString().padStart(2, '0')}:00`;
+  }
+
+  countdownInterval = setInterval(() => {
+    timeLeft--;
+    if (timeLeft <= 0) {
+      clearInterval(countdownInterval);
+      showNotification(`The room has expired (${expiryMinutes || 1}-minute limit reached).`, 'error');
+      resetTransferState();
+      showPanel('dashboard');
+      return;
+    }
+
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
+    if (label) {
+      label.innerText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+  }, 1000);
+}
+
+// Google Auth Flow
+function handleGoogleLoginSuccess(profile) {
+  currentUser = profile;
+  
+  // Persist user profile session for page reload resilience
+  localStorage.setItem('currentUser', JSON.stringify(profile));
+  
+  // Render user profile details
+  const nameEl = document.getElementById('user-name');
+  const emailEl = document.getElementById('user-email');
+  const avatarEl = document.getElementById('user-avatar');
+  if (nameEl) nameEl.innerText = profile.name;
+  if (emailEl) emailEl.innerText = profile.email;
+  if (avatarEl) avatarEl.src = profile.picture || 'https://via.placeholder.com/32';
+  
+  const userHeader = document.getElementById('user-header');
+  if (userHeader) userHeader.classList.remove('hidden');
+  
+  // Activate sliding logo animation on header
+  const header = document.querySelector('.app-header');
+  if (header) header.classList.add('active-mode');
+
+  // Update dashboard card auth states
+  const authContainer = document.getElementById('dash-auth-container');
+  if (authContainer) authContainer.classList.add('hidden');
+  
+  const startSendBtn = document.getElementById('btn-start-sending-dash');
+  if (startSendBtn) startSendBtn.classList.remove('hidden');
+  
+  const cardDesc = document.getElementById('send-card-desc');
+  if (cardDesc) cardDesc.innerText = 'Select files and get a temporary 6-digit PIN to establish a direct WebRTC pipeline.';
+  
+  const receiveCardDesc = document.getElementById('receive-card-desc');
+  if (receiveCardDesc) receiveCardDesc.innerText = 'Enter a 6-digit room PIN to securely download files using your Google identity.';
+  
+  // Init websockets connection
+  initSocket();
+}
+
+let lobbiesInterval = null;
+
+// Fetch and render the active rooms list for the receiver
+async function fetchActiveLobbies() {
+  try {
+    const res = await fetch('/active-rooms');
+    const data = await res.json();
+    if (data && data.success) {
+      renderLobbiesList(data.rooms, data.roomsCount);
+    }
+  } catch (err) {
+    console.error('Error fetching active lobbies:', err);
+  }
+}
+
+function renderLobbiesList(rooms, count) {
+  const onlineCountEl = document.getElementById('lobbies-online-count');
+  if (onlineCountEl) {
+    onlineCountEl.innerText = `Active Lobbies (${count} Online)`;
+  }
+  
+  const listEl = document.getElementById('active-lobbies-list');
+  if (!listEl) return;
+  
+  if (count === 0) {
+    listEl.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 10px;">No active lobbies nearby. Ask a sender to open a room.</div>`;
+    return;
+  }
+  
+  listEl.innerHTML = '';
+  rooms.forEach(room => {
+    const isFull = room.clientsCount >= (room.personLimit - 1);
+    
+    const item = document.createElement('div');
+    item.className = `lobby-item ${isFull ? 'full' : ''}`;
+    
+    const avatarHtml = room.hostPicture 
+      ? `<img src="${room.hostPicture}" class="lobby-avatar" style="object-fit: cover;">`
+      : `<div class="lobby-avatar">🎮</div>`;
+      
+    const badgeHtml = isFull 
+      ? `<span class="lobby-badge badge-full">Full</span>`
+      : `<span class="lobby-badge badge-private">🔒 Private</span>`;
+      
+    item.innerHTML = `
+      ${avatarHtml}
+      <div class="lobby-details">
+        <span class="lobby-name">${escapeHtmlLobby(room.roomName)}</span>
+        <span class="lobby-host">Host: ${escapeHtmlLobby(room.hostName)}</span>
+      </div>
+      ${badgeHtml}
+    `;
+    
+    if (!isFull) {
+      item.onclick = () => {
+        // Deselect all items
+        document.querySelectorAll('.lobby-item').forEach(el => el.classList.remove('selected'));
+        item.classList.add('selected');
+        
+        // Focus PIN inputs
+        const firstInput = document.querySelector('.pin-box');
+        if (firstInput) firstInput.focus();
+      };
+    }
+    
+    listEl.appendChild(item);
+  });
+}
+
+function escapeHtmlLobby(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Automatically fetch configuration and initialize Google Identity Services
+async function loadGoogleSignInConfig() {
+  try {
+    const res = await fetch('/config');
+    const config = await res.json();
+    if (config && config.googleClientId) {
+      initGoogleSignIn(config.googleClientId);
+    }
+  } catch (err) {
+    console.error('Error fetching Google Sign-In config:', err);
+  }
+}
+
+let googleInitRetries = 0;
+let tokenClient = null;
+
+function initGoogleSignIn(clientId) {
+  // If Google Identity Services SDK hasn't loaded yet, retry up to 5 seconds
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+    if (googleInitRetries < 50) {
+      googleInitRetries++;
+      setTimeout(() => initGoogleSignIn(clientId), 100);
+    } else {
+      console.error('Google Sign-In SDK failed to load after 5 seconds.');
+      showAuthError('Failed to load Google Sign-In. Please check your internet connection or disable your adblocker.');
+    }
+    return;
+  }
+
+  try {
+    showAuthError(null); // Clear loading / error messages
+
+    // Initialize the token client using oauth2 client authorization flow
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+      callback: async (tokenResponse) => {
+        if (tokenResponse && tokenResponse.access_token) {
+          try {
+            // Fetch user profile from the standard Google OAuth API using the access token
+            const res = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${tokenResponse.access_token}`);
+            const user = await res.json();
+            if (user) {
+              handleGoogleLoginSuccess({
+                name: user.name,
+                email: user.email,
+                picture: user.picture
+              });
+            } else {
+              showAuthError('Failed to retrieve user profile data.');
+            }
+          } catch (err) {
+            console.error('Error fetching Google profile:', err);
+            showAuthError('Error fetching your Google profile details.');
+          }
+        } else {
+          showAuthError('Authorization failed or was cancelled.');
+        }
+      }
+    });
+
+    // Bind click event to our custom HTML login button
+    const googleLoginBtn = document.getElementById('btn-google-login');
+    if (googleLoginBtn) {
+      googleLoginBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (tokenClient) {
+          tokenClient.requestAccessToken();
+        } else {
+          showAuthError('Google Client is not ready.');
+        }
+      };
+    }
+  } catch (err) {
+    console.error('Error initializing Google token client:', err);
+    showAuthError('Could not initialize Google Identity Services.');
+  }
+}
+
+// Inline Auth panel warning rendering
+function showAuthError(message) {
+  const errEl = document.getElementById('auth-error-msg');
+  if (errEl) {
+    if (message) {
+      errEl.innerText = message;
+      errEl.classList.remove('hidden');
+    } else {
+      errEl.classList.add('hidden');
+    }
+  }
+}
+
+// Decodes standard JWT tokens on client-side
+function decodeJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.error('JWT Decode Exception:', e);
+    return null;
+  }
+}
+
+let confirmResolve = null;
+
+function showCustomConfirm(title, message) {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    
+    const modalTitleEl = document.querySelector('#confirm-modal h3');
+    const modalTextEl = document.querySelector('#confirm-modal p');
+    if (modalTitleEl) modalTitleEl.innerText = title || 'Close Transfer Room?';
+    if (modalTextEl) modalTextEl.innerText = message || 'Are you sure you want to close this room?';
+    
+    const modal = document.getElementById('confirm-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      modal.offsetHeight; // trigger reflow
+      modal.classList.add('show');
+    } else {
+      resolve(confirm(message));
+    }
+  });
+}
+
+function hideCustomConfirm(value) {
+  const modal = document.getElementById('confirm-modal');
+  if (modal) {
+    modal.classList.remove('show');
+    setTimeout(() => {
+      modal.classList.add('hidden');
+      if (confirmResolve) {
+        confirmResolve(value);
+        confirmResolve = null;
+      }
+    }, 300);
+  } else {
+    if (confirmResolve) {
+      confirmResolve(value);
+      confirmResolve = null;
+    }
+  }
+}
+
+// Bind modal action buttons
+const btnModalOk = document.getElementById('btn-confirm-modal-ok');
+if (btnModalOk) {
+  btnModalOk.addEventListener('click', () => {
+    hideCustomConfirm(true);
+  });
+}
+
+const btnModalCancel = document.getElementById('btn-confirm-modal-cancel');
+if (btnModalCancel) {
+  btnModalCancel.addEventListener('click', () => {
+    hideCustomConfirm(false);
+  });
+}
+
+// Sign Out Handler
+document.getElementById('btn-signout').addEventListener('click', async () => {
+  if (currentRole === 'sender' && activePin) {
+    const isConfirmed = await showCustomConfirm(
+      "Sign Out?",
+      "You have an active transfer room. Are you sure you want to sign out and close it?"
+    );
+    if (!isConfirmed) return;
+  }
+  currentUser = null;
+  localStorage.removeItem('currentUser'); // Clear persisted session
+  
+  const userHeader = document.getElementById('user-header');
+  if (userHeader) userHeader.classList.add('hidden');
+  
+  // Reset sliding logo animation on header
+  const header = document.querySelector('.app-header');
+  if (header) header.classList.remove('active-mode');
+
+  // Reset dashboard card auth states
+  const authContainer = document.getElementById('dash-auth-container');
+  if (authContainer) authContainer.classList.remove('hidden');
+  
+  const startSendBtn = document.getElementById('btn-start-sending-dash');
+  if (startSendBtn) startSendBtn.classList.add('hidden');
+  
+  const cardDesc = document.getElementById('send-card-desc');
+  if (cardDesc) cardDesc.innerText = 'Authenticate with Google to securely host a direct P2P transfer session.';
+
+  const receiveCardDesc = document.getElementById('receive-card-desc');
+  if (receiveCardDesc) receiveCardDesc.innerText = 'Connect as a guest to instantly download files via a 6-digit room PIN.';
+
+  resetTransferState();
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  showPanel('dashboard');
+});
+
+// NAVIGATION: Main Dashboard Selectors
+document.getElementById('card-trigger-send').addEventListener('click', (e) => {
+  // If they click on authentication widgets inside the card, ignore
+  if (e.target.closest('#dash-auth-container') || e.target.closest('.btn-google') || e.target.closest('.oauth-config-input')) {
+    return;
+  }
+  
+  if (!currentUser) {
+    showNotification('Please log in with Google to send files.', 'info');
+    return;
+  }
+  
+  currentRole = 'sender';
+  showPanel('sender');
+  showSubStep(views.sendSelect, [views.sendSettings, views.sendDashboard]);
+});
+
+// Button listener for Start Sending when already logged in
+const btnStartSendingDash = document.getElementById('btn-start-sending-dash');
+if (btnStartSendingDash) {
+  btnStartSendingDash.addEventListener('click', (e) => {
+    e.stopPropagation();
+    currentRole = 'sender';
+    showPanel('sender');
+    showSubStep(views.sendSelect, [views.sendSettings, views.sendDashboard]);
+  });
+}
+
+// Receive handler wrapper
+const startReceiveHandler = (e) => {
+  if (e) e.stopPropagation();
+  currentRole = 'receiver';
+  document.body.classList.add('receiver-active');
+  showPanel('receiver');
+  showSubStep(views.receivePin, [views.receiveNegotiate, views.receiveTransfer]);
+  
+  // Initialize socket connection for receiver if not already connected
+  initSocket();
+
+  // Fetch active lobbies list immediately on load, and start polling every 5 seconds
+  fetchActiveLobbies();
+  if (lobbiesInterval) clearInterval(lobbiesInterval);
+  lobbiesInterval = setInterval(fetchActiveLobbies, 5000);
+  
+  // Pre-fill and hide nickname input if user is authenticated with Google
+  const nicknameContainer = document.querySelector('.nickname-container');
+  const nicknameEl = document.getElementById('receiver-nickname');
+  if (currentUser) {
+    if (nicknameEl) nicknameEl.value = currentUser.name;
+    if (nicknameContainer) nicknameContainer.style.display = 'none';
+  } else {
+    if (nicknameEl) nicknameEl.value = '';
+    if (nicknameContainer) nicknameContainer.style.display = 'flex';
+  }
+  
+  // Focus first input box
+  setTimeout(() => {
+    const firstInput = document.querySelector('.pin-box');
+    if (firstInput) firstInput.focus();
+  }, 100);
+};
+
+document.getElementById('card-trigger-receive').addEventListener('click', startReceiveHandler);
+
+const btnStartReceivingDash = document.getElementById('btn-start-receiving-dash');
+if (btnStartReceivingDash) {
+  btnStartReceivingDash.addEventListener('click', startReceiveHandler);
+}
+
+// Back buttons
+document.getElementById('btn-back-send').addEventListener('click', async () => {
+  if (currentRole === 'sender' && activePin) {
+    const isConfirmed = await showCustomConfirm(
+      "Close Transfer Room?",
+      "Are you sure you want to close this room? All active transfers will be terminated."
+    );
+    if (!isConfirmed) return;
+  }
+  resetTransferState();
+  showPanel('dashboard');
+});
+
+document.getElementById('btn-back-receive').addEventListener('click', () => {
+  resetTransferState();
+  showPanel('dashboard');
+});
+
+// Cancel transfer buttons
+document.getElementById('btn-cancel-send').addEventListener('click', async () => {
+  if (currentRole === 'sender' && activePin) {
+    const isConfirmed = await showCustomConfirm(
+      "Close Transfer Room?",
+      "Are you sure you want to close this room? All active transfers will be terminated."
+    );
+    if (!isConfirmed) return;
+  }
+  resetTransferState();
+  showPanel('dashboard');
+});
+
+document.getElementById('btn-cancel-receive').addEventListener('click', () => {
+  resetTransferState();
+  showPanel('dashboard');
+});
+
+// FILE DRAG & DROP SELECTION
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('dragover');
+});
+
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length > 0) {
+    handleFileSelected(e.dataTransfer.files);
+  }
+});
+
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length > 0) {
+    handleFileSelected(e.target.files);
+  }
+});
+
+function handleFileSelected(files) {
+  const newFiles = Array.from(files);
+  // Append new files to selection queue
+  selectedFiles = selectedFiles.concat(newFiles);
+  if (selectedFiles.length === 0) return;
+
+  renderPreviewList();
+}
+
+function renderPreviewList() {
+  const listContainer = document.getElementById('selected-files-list');
+  const detailsCard = document.getElementById('file-details-card');
+  const layoutEl = document.getElementById('select-step-layout');
+
+  if (selectedFiles.length === 0) {
+    if (layoutEl) layoutEl.classList.remove('files-selected');
+    if (detailsCard) detailsCard.classList.add('hidden');
+    const fileInputEl = document.getElementById('file-input');
+    if (fileInputEl) fileInputEl.value = '';
+    selectedFile = null;
+    return;
+  }
+
+  if (layoutEl) layoutEl.classList.add('files-selected');
+  if (detailsCard) detailsCard.classList.remove('hidden');
+
+  if (listContainer) {
+    listContainer.innerHTML = '';
+    selectedFiles.forEach((file, index) => {
+      const item = document.createElement('div');
+      item.className = 'file-item-row';
+      item.id = `selected-file-row-${index}`;
+      item.innerHTML = `
+        <span class="file-item-icon">📄</span>
+        <div class="file-item-info">
+          <span class="file-item-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+          <span class="file-item-size">${formatBytes(file.size)}</span>
+        </div>
+        <button class="btn-remove-file" data-index="${index}" title="Remove file">×</button>
+      `;
+      listContainer.appendChild(item);
+    });
+
+    // Bind remove button listeners
+    const removeButtons = listContainer.querySelectorAll('.btn-remove-file');
+    removeButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-index'));
+        selectedFiles.splice(idx, 1);
+        renderPreviewList();
+      });
+    });
+  }
+
+  // Set fallback compatibility selectedFile for STUN setup references
+  selectedFile = selectedFiles[0];
+}
+
+// Render dynamic dashboard list of sharing files
+function renderDashboardFilesList() {
+  const listContainer = document.getElementById('dash-files-list');
+  if (!listContainer) return;
+  listContainer.innerHTML = '';
+  selectedFiles.forEach((file, index) => {
+    const item = document.createElement('div');
+    item.className = 'file-item-row';
+    item.id = `sender-file-row-${index}`;
+    item.innerHTML = `
+      <span class="file-item-icon">📄</span>
+      <div class="file-item-info">
+        <span class="file-item-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+        <span class="file-item-size">${formatBytes(file.size)}</span>
+      </div>
+      <span class="file-item-status" id="sender-file-status-${index}">Waiting</span>
+    `;
+    listContainer.appendChild(item);
+  });
+}
+
+// SENDER: Approve receiver join request
+document.getElementById('btn-approve-request').addEventListener('click', () => {
+  if (pendingClientSocketId) {
+    socket.emit('approve-peer', { clientSocketId: pendingClientSocketId });
+    // Instantly hide request card and show active card
+    document.getElementById('receiver-request-card').classList.add('hidden');
+    document.getElementById('receiver-active-card').classList.remove('hidden');
+  }
+});
+
+// SENDER: Reject receiver join request
+document.getElementById('btn-reject-request').addEventListener('click', () => {
+  if (pendingClientSocketId) {
+    socket.emit('reject-peer', { clientSocketId: pendingClientSocketId });
+    // Instantly hide request card and restore placeholder
+    document.getElementById('receiver-request-card').classList.add('hidden');
+    document.getElementById('receiver-placeholder').classList.remove('hidden');
+    pendingClientSocketId = null;
+  }
+});
+
+// SENDER: Go to Room Settings configuration panel
+document.getElementById('btn-generate-pin').addEventListener('click', () => {
+  if (selectedFiles.length === 0) return;
+  document.body.classList.add('sender-active');
+  showSubStep(views.sendSettings, [views.sendSelect, views.sendDashboard]);
+});
+
+// SENDER: Go back from settings to file selection
+document.getElementById('btn-back-to-select').addEventListener('click', () => {
+  document.body.classList.remove('sender-active');
+  showSubStep(views.sendSelect, [views.sendSettings, views.sendDashboard]);
+});
+
+// SENDER: Confirm Settings, Generate PIN, and Open Room
+document.getElementById('btn-confirm-room').addEventListener('click', () => {
+  if (selectedFiles.length === 0) return;
+
+  // Collect settings
+  const roomName = document.getElementById('setting-room-name').value.trim();
+  const personLimit = parseInt(document.getElementById('setting-person-limit').value) || 2;
+  const expiryLimit = parseInt(document.getElementById('setting-expiry-limit').value) || 1;
+
+  const settings = {
+    roomName,
+    personLimit,
+    expiryLimit
+  };
+
+  socket.emit('create-room', { senderProfile: currentUser, settings }, (response) => {
+    if (response.success) {
+      activePin = response.pin;
+      currentFileIndex = 0;
+      completedFilesBytes = 0;
+      senderOffset = 0;
+      
+      // Calculate total queue size
+      totalFilesSize = selectedFiles.reduce((acc, file) => acc + file.size, 0);
+
+      // Update Room Name on Host Dashboard
+      const roomTitleEl = document.getElementById('dash-room-title');
+      if (roomTitleEl) {
+        roomTitleEl.innerText = `Lobby: ${response.roomName}`;
+        roomTitleEl.style.display = 'block';
+      }
+
+      // Update Person Limit on Host Dashboard
+      const peerCountEl = document.getElementById('dash-peer-count');
+      if (peerCountEl) {
+        peerCountEl.innerText = `(0/${response.personLimit - 1} connected)`;
+      }
+
+      // Update UI elements in Sender Dashboard
+      document.getElementById('dash-pin-code').innerText = activePin;
+      renderDashboardFilesList();
+      
+      // Reset upload progress values
+      document.getElementById('send-progress-fill').style.width = '0%';
+      document.getElementById('send-progress-pct').innerText = '0%';
+      document.getElementById('send-transfer-speed').innerText = '0 KB/s';
+      document.getElementById('send-bytes-meta').innerText = `0 Bytes / ${formatBytes(totalFilesSize)}`;
+      document.getElementById('send-time-remaining').innerText = 'Calculating...';
+      
+      // Reset connected peer card to waiting state
+      document.getElementById('receiver-placeholder').classList.remove('hidden');
+      document.getElementById('receiver-active-card').classList.add('hidden');
+      
+      showSubStep(views.sendDashboard, [views.sendSelect, views.sendSettings]);
+      document.body.classList.remove('receiver-active');
+      
+      // Start the countdown timer for the room session based on expiry setting
+      startCountdownTimer(response.expiryLimit);
+    } else {
+      console.error('Failed to create transfer room:', response.error);
+    }
+  });
+});
+
+// RECEIVER: PIN Entry inputs focus navigation
+const pinBoxes = document.querySelectorAll('.pin-box');
+pinBoxes.forEach((box, idx) => {
+  box.addEventListener('input', (e) => {
+    // Only allow numbers
+    box.value = box.value.replace(/[^0-9]/g, '');
+    
+    if (box.value.length === 1 && idx < pinBoxes.length - 1) {
+      pinBoxes[idx + 1].focus();
+    }
+  });
+
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Backspace' && box.value.length === 0 && idx > 0) {
+      pinBoxes[idx - 1].focus();
+    }
+  });
+});
+
+// RECEIVER: Handle Submit PIN Connect
+document.getElementById('btn-connect-pin').addEventListener('click', async () => {
+  // Collect 6-digit PIN
+  let pin = '';
+  pinBoxes.forEach(box => { pin += box.value; });
+
+  const errorMsgEl = document.getElementById('receive-error-msg');
+  errorMsgEl.classList.add('hidden');
+
+  if (pin.length !== 6) {
+    errorMsgEl.innerText = 'Please fill out the full 6-digit PIN code.';
+    errorMsgEl.classList.remove('hidden');
+    return;
+  }
+
+  const nicknameEl = document.getElementById('receiver-nickname');
+  const nickname = nicknameEl ? nicknameEl.value.trim() : '';
+  if (!nickname) {
+    if (nicknameEl) {
+      nicknameEl.style.borderColor = 'var(--danger-color)';
+      nicknameEl.focus();
+    }
+    errorMsgEl.innerText = 'Please enter your name to connect.';
+    errorMsgEl.classList.remove('hidden');
+    return;
+  } else {
+    if (nicknameEl) {
+      nicknameEl.style.borderColor = 'rgba(0, 0, 0, 0.1)';
+    }
+  }
+
+  activePin = pin;
+  document.getElementById('receiver-connection-status').innerText = 'Pre-initializing WebRTC...';
+  showSubStep(views.receiveNegotiate, [views.receivePin, views.receiveTransfer]);
+  document.body.classList.add('receiver-active');
+
+  // Pre-initialize WebRTC connection to avoid signaling race conditions
+  try {
+    await initializeRtcConnection(false);
+  } catch (err) {
+    console.error('Error initializing RTC connection:', err);
+    errorMsgEl.innerText = 'Failed to initialize WebRTC subsystem.';
+    errorMsgEl.classList.remove('hidden');
+    showSubStep(views.receivePin, [views.receiveNegotiate, views.receiveTransfer]);
+    return;
+  }
+
+  document.getElementById('receiver-connection-status').innerText = 'Sending join request to host...';
+
+  // Request room join on socket.io signaling backend
+  const receiverProfile = currentUser ? {
+    name: currentUser.name,
+    email: currentUser.email,
+    picture: currentUser.picture
+  } : {
+    name: nickname,
+    email: 'Guest Link',
+    picture: null
+  };
+
+  socket.emit('join-room', { pin, receiverProfile }, (response) => {
+    if (response.success) {
+      if (response.status === 'waiting_approval') {
+        console.log('Join request sent, waiting for host approval...');
+        const statusText = response.roomName 
+          ? `Waiting for host of "${response.roomName}" to approve connection...` 
+          : 'Waiting for room host to approve connection...';
+        document.getElementById('receiver-connection-status').innerText = statusText;
+      }
+    } else {
+      // If joining fails, reset RTC objects
+      resetTransferState();
+
+      // Go back to input screen and render error message
+      showSubStep(views.receivePin, [views.receiveNegotiate, views.receiveTransfer]);
+      errorMsgEl.innerText = response.error || 'Connection failed.';
+      errorMsgEl.classList.remove('hidden');
+      
+      // Reset PIN inputs
+      pinBoxes.forEach(box => { box.value = ''; });
+      pinBoxes[0].focus();
+    }
+  });
+});
+
+// HTML escaping helper
+function escapeHtml(str) {
+  return str.toString()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Automatically establish socket connection on page load
+initSocket();
+
+// Automatically load Google Sign-In SDK configuration on page load
+loadGoogleSignInConfig();
+
+// Automatically restore user login session from localStorage on page load
+const savedUser = localStorage.getItem('currentUser');
+if (savedUser) {
+  try {
+    const profile = JSON.parse(savedUser);
+    handleGoogleLoginSuccess(profile);
+  } catch (err) {
+    console.error('Error restoring session from localStorage:', err);
+    localStorage.removeItem('currentUser');
+  }
+}

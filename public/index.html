@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DropStrike - High-Speed WebRTC P2P File Sharing</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Custom Styling -->
+  <link rel="stylesheet" href="style.css?v=37">
+  <!-- Socket.io Client -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Google Identity Services SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="searching-active">
+  <!-- Dynamic Web Notification Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Radar Searching Background live wallpaper -->
+  <div id="radar-bg" class="radar-bg-container">
+    <div class="radar-sweep"></div>
+    <div class="radar-circle radar-circle-1"></div>
+    <div class="radar-circle radar-circle-2"></div>
+    <div class="radar-circle radar-circle-3"></div>
+    <div class="radar-circle radar-circle-4"></div>
+  </div>
+
+  <!-- Atmospheric background grids/glowing Orbs -->
+  <div class="glow-orb" id="orb-1"></div>
+  <div class="glow-orb" id="orb-2"></div>
+  <div class="grid-background"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="logo-icon">🗲</span>
+        <h1 class="logo-text">Drop<span>Strike</span></h1>
+      </div>
+      
+      <!-- User Profile Header Section -->
+      <div id="user-header" class="user-header-profile hidden">
+        <img id="user-avatar" src="" alt="Avatar">
+        <div class="user-info">
+          <span id="user-name">User</span>
+          <span id="user-email">email@google.com</span>
+        </div>
+        <button id="btn-signout" class="btn btn-secondary btn-sm">Sign Out</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <!-- PANEL 2: MAIN DASHBOARD (Default Landing Page) -->
+      <section id="panel-dashboard" class="glass-card panel-active">
+        <div class="dashboard-grid">
+          <!-- Send Section -->
+          <div class="dashboard-option send-card" id="card-trigger-send">
+            <div class="card-icon">📤</div>
+            <h3>Send Files</h3>
+            <p id="send-card-desc">Authenticate with Google to securely host a direct P2P transfer session.</p>
+            
+            <!-- Auth controls inside Send Files card when not logged in -->
+            <div id="dash-auth-container" style="width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+              <button id="btn-google-login" class="btn btn-block btn-dashboard-style btn-send-style" style="margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg" alt="Google Logo" width="18" height="18" style="background: white; border-radius: 50%; padding: 1px;">
+                Continue with Google
+              </button>
+              <div id="auth-error-msg" class="error-message hidden" style="margin-top: 10px; font-size: 13px; color: var(--danger-color); text-align: center;"></div>
+            </div>
+            
+            <!-- Start button inside Send Files card when logged in -->
+            <button id="btn-start-sending-dash" class="btn btn-block btn-dashboard-style btn-send-style hidden">Start Sending</button>
+          </div>
+
+          <!-- Receive Section -->
+          <div class="dashboard-option receive-card" id="card-trigger-receive">
+            <div class="card-icon">📥</div>
+            <h3>Receive Files</h3>
+            <p id="receive-card-desc">Connect as a guest to instantly download files via a 6-digit room PIN.</p>
+            <button class="btn btn-block btn-dashboard-style btn-receive-style" id="btn-start-receiving-dash">Start Receiving</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- PANEL 3: SENDER SYSTEM -->
+      <section id="panel-sender" class="glass-card hidden">
+        <div class="panel-header">
+          <button class="btn-back" id="btn-back-send" title="Back to Dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
+          <h2>Send a File</h2>
+        </div>
+
+        <div class="panel-body">
+          <!-- Step 1: File Selection -->
+          <div id="send-step-select" class="transfer-step active-step" style="width: 100%;">
+            <div class="select-step-layout" id="select-step-layout">
+              <div class="drop-zone" id="drop-zone">
+                <div class="drop-zone-icon">☁️</div>
+                <h3>Drag & Drop File(s) Here</h3>
+                <p>Or click to browse from your device</p>
+                <input type="file" id="file-input" class="hidden-file-input" multiple>
+                <span class="file-limits-label">Any size supported. Buffering is limited by browser RAM.</span>
+              </div>
+              
+              <div id="file-details-card" class="file-details-panel hidden">
+                <h3>Selected Files</h3>
+                <div class="selected-files-list" id="selected-files-list">
+                  <!-- Lists files selected dynamically -->
+                </div>
+                <button id="btn-generate-pin" class="btn btn-block btn-dashboard-style btn-send-style">Start Sending</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 1b: Room Configuration Settings -->
+          <div id="send-step-settings" class="transfer-step hidden" style="width: 100%;">
+            <div style="width: 100%; max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; text-align: left;">
+              <h3 style="font-size: 22px; font-weight: 700; margin-bottom: 5px; text-align: center; color: var(--text-primary);">Room Configuration</h3>
+              <p style="font-size: 14px; color: var(--text-secondary); text-align: center; margin-bottom: 15px;">Configure your transfer room's parameters before generating the code.</p>
+
+              <!-- Room Name -->
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Name (Optional)</span>
+                <input type="text" id="setting-room-name" class="input-field" placeholder="e.g. Physics Lab Session" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none;">
+              </div>
+
+              <!-- Person Limit -->
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Person Limit</span>
+                <select id="setting-person-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
+                  <option value="2" selected>2 People (1 Sender + 1 Receiver)</option>
+                  <option value="3">3 People (1 Sender + 2 Receivers)</option>
+                  <option value="5">5 People (1 Sender + 4 Receivers)</option>
+                  <option value="10">10 People (1 Sender + 9 Receivers)</option>
+                </select>
+              </div>
+
+              <!-- Expiry Limit -->
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Expiry Limit</span>
+                <select id="setting-expiry-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
+                  <option value="1" selected>1 Minute</option>
+                  <option value="5">5 Minutes</option>
+                  <option value="10">10 Minutes</option>
+                  <option value="30">30 Minutes</option>
+                  <option value="60">1 Hour</option>
+                </select>
+              </div>
+
+              <div class="connect-action-wrapper" style="margin-top: 20px; display: flex; gap: 15px; width: 100%;">
+                <button id="btn-back-to-select" class="btn btn-block" style="flex: 1; background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; color: var(--text-primary);">Back</button>
+                <button id="btn-confirm-room" class="btn btn-block btn-dashboard-style btn-send-style" style="flex: 2;">Open Room & Get PIN</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Unified Sender Dashboard (Side-by-Side) -->
+          <div id="send-step-dashboard" class="transfer-step hidden">
+            <div class="sender-dashboard-layout">
+              <!-- Left Column: Shared File & Room Meta -->
+              <div class="dash-col dash-col-left">
+                <div id="dash-room-title" style="font-size: 20px; font-weight: 800; border-bottom: 1px solid rgba(0,0,0,0.06); padding-bottom: 10px; margin-bottom: 15px; color: var(--text-primary); display: none;">Lobby: Room Name</div>
+                <div class="dash-section-title">Shared File(s)</div>
+                <div class="files-list-container" id="dash-files-list">
+                  <!-- File items with their separate progress/status details dynamically generated -->
+                </div>
+                
+                <!-- Room PIN and Timer -->
+                <div class="room-info-card">
+                  <div class="room-pin-display">
+                    <span class="room-pin-label">Room PIN</span>
+                    <div class="pin-code-small" id="dash-pin-code">------</div>
+                  </div>
+                  <div class="room-timer-display">
+                    <span class="room-timer-label">Room Expiry</span>
+                    <div class="timer-countdown-val" id="dash-countdown-val">01:00</div>
+                  </div>
+                </div>
+
+                <!-- Upload progress (Streaming status) -->
+                <div class="progress-bar-wrapper">
+                  <span class="details-label">Stream upload status:</span>
+                  <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="send-progress-fill"></div>
+                  </div>
+                  <div class="progress-meta">
+                    <span id="send-progress-pct">0%</span>
+                    <span id="send-transfer-speed">0 KB/s</span>
+                  </div>
+                </div>
+                <div class="transfer-details-grid-compact" style="display: grid; grid-template-columns: 1fr 1fr; width: 100%; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+                  <div class="transfer-stat">
+                    <span class="stat-label">Remaining Time</span>
+                    <span class="stat-val" id="send-time-remaining">Calculating...</span>
+                  </div>
+                  <div class="transfer-stat">
+                    <span class="stat-label">Sent Size</span>
+                    <span class="stat-val" id="send-bytes-meta">0 MB / 0 MB</span>
+                  </div>
+                </div>
+                
+                <button id="btn-cancel-send" class="btn btn-danger btn-block">Cancel Transfer / Close Room</button>
+              </div>
+
+              <!-- Right Column: Connected Receiver(s) -->
+              <div class="dash-col dash-col-right">
+                <div class="dash-section-title">Connected Peer <span id="dash-peer-count" style="text-transform: none; font-weight: normal; font-size: 14px; margin-left: 5px; color: var(--text-muted);"></span></div>
+                                <!-- Placeholder when waiting -->
+                 <div id="receiver-placeholder" class="receiver-placeholder-card">
+                   <div class="pulse-ring"></div>
+                   <p>Waiting for a receiver to join using the room PIN...</p>
+                 </div>
+
+                 <!-- Receiver Join Request Card -->
+                 <div id="receiver-request-card" class="receiver-request-card hidden" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 16px; padding: 24px; text-align: center; display: flex; flex-direction: column; gap: 15px; align-items: center; width: 100%;">
+                   <div style="font-size: 36px;">👤</div>
+                   <h4 style="font-size: 18px; font-weight: 700; margin: 0;" id="request-receiver-name">Receiver Name</h4>
+                   <p style="color: var(--text-secondary); font-size: 14px; margin: 0;">wants to join your transfer room.</p>
+                   <div style="display: flex; gap: 10px; width: 100%; margin-top: 10px;">
+                     <button id="btn-approve-request" class="btn btn-accent" style="flex: 1; color: #ffffff;">Approve</button>
+                     <button id="btn-reject-request" class="btn btn-danger" style="flex: 1; color: #ffffff;">Reject</button>
+                   </div>
+                 </div>
+
+                 <!-- Receiver profile and progress status -->
+                 <div id="receiver-active-card" class="receiver-active-card hidden">
+                  <div class="receiver-profile-row">
+                    <img id="receiver-dash-avatar" src="" alt="Receiver Avatar">
+                    <div class="receiver-profile-info">
+                      <h4 id="receiver-dash-name">Receiver Name</h4>
+                      <p id="receiver-dash-email">receiver@gmail.com</p>
+                    </div>
+                    <!-- Download Status next to the receiver profile -->
+                    <div class="receiver-download-status-badge" id="receiver-download-badge">
+                      Connecting
+                    </div>
+                  </div>
+                  
+                  <!-- Real-time Download progress details -->
+                  <div class="receiver-download-details">
+                    <span class="details-label">Receiver Download Progress:</span>
+                    <div class="progress-bar-track">
+                      <div class="progress-bar-fill progress-bar-fill-accent" id="receiver-download-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-meta">
+                      <span id="receiver-download-pct">0%</span>
+                      <span id="receiver-download-text">Waiting to download...</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PANEL 4: RECEIVER SYSTEM -->
+      <section id="panel-receiver" class="glass-card hidden">
+        <div class="panel-header">
+          <button class="btn-back" id="btn-back-receive" title="Back to Dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
+          <h2>Receive a File</h2>
+        </div>
+
+        <div class="panel-body">
+          <!-- Step 1: Input PIN -->
+          <div id="receive-step-pin" class="transfer-step active-step">
+            <p class="step-instruction">Select an active lobby or enter the 6-digit room PIN provided by the sender:</p>
+            
+            <!-- Active Lobbies List Section -->
+            <div class="lobbies-section" style="width: 100%; max-width: 480px; margin: 0 auto 20px auto; display: flex; flex-direction: column; gap: 8px;">
+              <span class="details-label" id="lobbies-online-count" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted); text-align: center;">Active Lobbies (0 Online)</span>
+              <div id="active-lobbies-list" class="active-lobbies-list" style="max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px; border: 1px dashed rgba(0, 0, 0, 0.1); border-radius: 12px; background: rgba(0,0,0,0.01);">
+                <div style="text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 10px;">Loading active lobbies...</div>
+              </div>
+            </div>
+
+            <div class="pin-inputs-container">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+              <input type="text" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric">
+            </div>
+            <div class="nickname-container" style="width: 100%; max-width: 480px; margin: 15px auto 25px auto; display: flex; flex-direction: column; gap: 8px;">
+              <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted); text-align: center;">Identify Yourself <span style="color: var(--danger-color); font-weight: 900;">*</span></span>
+              <input type="text" id="receiver-nickname" class="input-field" placeholder="Enter your name / ID (e.g. John Doe / Roll 42)" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); text-align: center; color: var(--text-primary); outline: none;" required>
+            </div>
+            <div class="connect-action-wrapper">
+              <button id="btn-connect-pin" class="btn btn-block btn-dashboard-style btn-receive-style">Connect & Initialize Peer Link</button>
+            </div>
+            <div id="receive-error-msg" class="error-message hidden"></div>
+          </div>
+
+          <!-- Step 2: Connecting & Negotiating -->
+          <div id="receive-step-negotiate" class="transfer-step hidden">
+            <div class="status-pulse-container">
+              <div class="pulse-ring pulse-ring-accent"></div>
+              <span class="pulse-status-text" id="receiver-connection-status">Establishing P2P WebRTC Channel...</span>
+            </div>
+            
+            <div id="sender-identity-card" class="peer-identity-card hidden">
+              <span class="badge badge-accent">Connected Sender</span>
+              <div class="peer-profile">
+                <img id="sender-avatar" src="" alt="Sender Avatar">
+                <div class="peer-info">
+                  <h4 id="sender-name">Sender Name</h4>
+                  <p id="sender-email">sender@gmail.com</p>
+                </div>
+              </div>
+              <div id="receiver-room-title-card" style="margin-top: 10px; display: none; background: rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.03); margin-bottom: 12px;">
+                <span class="meta-label" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); display: block; margin-bottom: 2px;">Lobby Name</span>
+                <strong id="receiver-room-name" style="font-size: 15px; font-weight: 700; color: var(--text-primary);">Physics Lab Session</strong>
+              </div>
+              <div class="peer-file-metadata">
+                <span class="meta-label">Sharing File:</span>
+                <strong id="sender-meta-filename">filename.ext</strong>
+                <span id="sender-meta-filesize">0 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: File Transferring -->
+          <div id="receive-step-transfer" class="transfer-step hidden">
+            <h3 class="transfer-title">Downloading Stream Directly from Peer</h3>
+            <div class="progress-bar-wrapper">
+              <div class="progress-bar-track">
+                <div class="progress-bar-fill progress-bar-fill-accent" id="receive-progress-fill"></div>
+              </div>
+              <div class="progress-meta">
+                <span id="receive-progress-pct">0%</span>
+                <span id="receive-transfer-speed">0 KB/s</span>
+              </div>
+            </div>
+            <div class="transfer-details-grid">
+              <div class="transfer-stat">
+                <span class="stat-label">Remaining Time</span>
+                <span class="stat-val" id="receive-time-remaining">Calculating...</span>
+              </div>
+              <div class="transfer-stat">
+                <span class="stat-label">Received Size</span>
+                <span class="stat-val" id="receive-bytes-meta">0 MB / 0 MB</span>
+              </div>
+            </div>
+            <button id="btn-cancel-receive" class="btn btn-danger btn-block">Cancel Transfer</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+
+  </div>
+
+  <!-- Custom Confirmation Modal -->
+  <div id="confirm-modal" class="confirm-modal-overlay hidden">
+    <div class="confirm-modal-card">
+      <h3>Close Transfer Room?</h3>
+      <p>Are you sure you want to close this room? All active transfers will be terminated.</p>
+      <div class="confirm-modal-actions">
+        <button id="btn-confirm-modal-cancel" class="btn btn-secondary btn-sm">Keep Open</button>
+        <button id="btn-confirm-modal-ok" class="btn btn-danger btn-sm">Close Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main JavaScript application logic -->
+  <script src="app.js?v=37"></script>
+</body>
+</html>
