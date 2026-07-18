@@ -1407,6 +1407,30 @@ body {
     padding: 20px;
     border-radius: 16px;
   }
+
+  /* Header styling overrides for mobile logged in state */
+  .app-header.active-mode {
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 16px !important;
+    padding-bottom: 20px !important;
+    min-height: auto !important;
+  }
+
+  .app-header.active-mode .logo-area {
+    position: relative !important;
+    left: auto !important;
+    transform: none !important;
+    margin: 0 auto !important;
+  }
+
+  .app-header.active-mode .user-header-profile {
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 340px !important;
+    justify-content: space-between !important;
+    transform: translateX(0) !important;
+  }
 }
 
 @media (max-width: 1024px) {
