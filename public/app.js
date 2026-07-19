@@ -1733,3 +1733,43 @@ if (savedUser) {
     localStorage.removeItem('currentUser');
   }
 }
+
+// -------------------------------------------------------------
+// Theme Toggle Logic
+// -------------------------------------------------------------
+const themeToggleBtn = document.getElementById('theme-toggle');
+const themeToggleIcon = document.getElementById('theme-toggle-icon');
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.body.classList.add('dark-theme');
+    themeToggleIcon.innerText = '☀️'; // Sun icon for switching back to light mode
+  } else {
+    document.body.classList.remove('dark-theme');
+    themeToggleIcon.innerText = '🌙'; // Moon icon for switching to dark mode
+  }
+}
+
+function toggleTheme() {
+  const isDark = document.body.classList.contains('dark-theme');
+  const newTheme = isDark ? 'light' : 'dark';
+  applyTheme(newTheme);
+  localStorage.setItem('theme', newTheme);
+}
+
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener('click', toggleTheme);
+}
+
+// Automatically apply theme on page load
+const savedTheme = localStorage.getItem('theme');
+if (savedTheme) {
+  applyTheme(savedTheme);
+} else {
+  // Check system preference if no saved theme
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    applyTheme('dark');
+  } else {
+    applyTheme('light');
+  }
+}
