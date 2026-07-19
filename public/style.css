@@ -21,6 +21,20 @@
   --danger-glow: rgba(220, 38, 38, 0.15);
 }
 
+body.dark-theme {
+  --bg-color: #050505; /* Deep, near-OLED Black */
+  --panel-bg: rgba(255, 255, 255, 0.06); /* High-contrast frosted glass */
+  --border-color: rgba(255, 255, 255, 0.15); /* Sharper bright border */
+  --text-primary: #ffffff; /* Pure white */
+  --text-secondary: #e2e8f0; /* Bright silver */
+  --text-muted: #a1a1aa; /* High contrast muted */
+  
+  /* Stronger, more vibrant glows for higher contrast */
+  --primary-glow: rgba(99, 102, 241, 0.6);
+  --accent-glow: rgba(16, 185, 129, 0.6);
+  --danger-glow: rgba(239, 68, 68, 0.6);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -42,9 +56,15 @@ body {
 .grid-background {
   display: none;
 }
+body.dark-theme .grid-background {
+  display: block;
+}
 
 .glow-orb {
   display: none;
+}
+body.dark-theme .glow-orb {
+  display: block;
 }
 
 .app-container {
@@ -82,7 +102,7 @@ body {
   align-items: center;
   gap: 10px;
   position: absolute;
-  left: 50%;
+  left: 49%; /* Slightly shifted left from exact center, but more right than before */
   transform: translateX(-50%);
   transition: all 1.8s cubic-bezier(0.25, 1, 0.25, 1); /* Slower, majestic slide */
 }
@@ -95,11 +115,11 @@ body {
 .logo-icon {
   position: relative;
   font-size: 28px;
-  background: linear-gradient(135deg, #64748b, #334155);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: pulse-glow 2s infinite alternate;
   transition: all 1.8s cubic-bezier(0.25, 1, 0.25, 1);
+}
+
+.app-header.active-mode .logo-icon {
+  animation: pulse-glow 2s infinite alternate;
 }
 
 /* Pseudo-element containing the active color gradient for a silky smooth 5-second fade */
@@ -157,6 +177,41 @@ body {
   color: #34d399;
 }
 
+/* Header Actions Container */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-left: auto;
+}
+
+/* Theme Toggle Button */
+.theme-toggle {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+.theme-toggle:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px var(--border-color);
+}
+.theme-toggle-icon {
+  transition: transform 0.5s cubic-bezier(0.25, 1.5, 0.5, 1);
+}
+body.dark-theme .theme-toggle-icon {
+  transform: rotate(360deg);
+}
+
 /* Google Identity User Card */
 .user-header-profile {
   display: flex;
@@ -167,7 +222,6 @@ body {
   padding: 6px 14px;
   border-radius: 40px;
   backdrop-filter: blur(10px);
-  margin-left: auto;
   opacity: 0;
   transform: translateX(30px);
   transition: opacity 0.8s ease, transform 0.8s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -1816,3 +1870,77 @@ body.receiver-active {
   color: var(--accent-color);
 }
 
+
+/* Page Layout with Side Ads */
+.page-wrapper-ads {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+/* Vertical Skyscraper Ad Containers */
+.ad-container-vertical {
+  width: 160px;
+  position: fixed;
+  top: 160px;
+  min-height: 600px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.01);
+  z-index: 10;
+}
+.ad-left {
+  left: 20px;
+}
+.ad-right {
+  right: 20px;
+}
+
+.ad-container-vertical ins {
+  width: 160px;
+  height: 600px;
+  background: rgba(0,0,0,0.01);
+  border-radius: 8px;
+}
+
+/* Mobile Ad Container */
+.ad-container-mobile {
+  display: none; /* Hidden by default on desktop */
+  width: 100%;
+  height: 50px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border-color);
+  backdrop-filter: blur(10px);
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.ad-container-mobile ins {
+  width: 320px;
+  height: 50px;
+  background: rgba(0,0,0,0.01);
+  border-radius: 4px;
+}
+
+/* Hide vertical side ads and show mobile ad on smaller tablet and mobile screens */
+@media (max-width: 1300px) {
+  .ad-container-vertical {
+    display: none !important;
+  }
+  .ad-container-mobile {
+    display: flex !important;
+  }
+  .app-container {
+    padding-bottom: 70px; /* Add space so the mobile ad doesn't cover content */
+  }
+}

@@ -4,12 +4,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DropStrike - High-Speed WebRTC P2P File Sharing</title>
+  <meta name="description" content="DropStrike is a premium, high-speed, secure peer-to-peer (P2P) file sharing web application. Create custom lobbies and share files directly between devices instantly using WebRTC.">
+  <meta name="keywords" content="DropStrike, P2P file sharing, WebRTC file transfer, share files directly, browser file share, secure file transfer, no file limit, peer-to-peer file transfer, send files to mobile">
+  <meta name="author" content="DropStrike Team">
+  <link rel="canonical" href="https://dropstrike.onrender.com">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://dropstrike.onrender.com">
+  <meta property="og:title" content="DropStrike - High-Speed WebRTC P2P File Sharing">
+  <meta property="og:description" content="Share files directly between devices securely with maximum speed. No cloud storage, no middleman, 100% private.">
+  <meta property="og:image" content="https://dropstrike.onrender.com/assets/og-image.png">
+
+  <!-- Twitter -->
+  <meta property="twitter:card" content="summary_large_image">
+  <meta property="twitter:url" content="https://dropstrike.onrender.com">
+  <meta property="twitter:title" content="DropStrike - High-Speed WebRTC P2P File Sharing">
+  <meta property="twitter:description" content="Share files directly between devices securely with maximum speed. No cloud storage, no middleman, 100% private.">
+  <meta property="twitter:image" content="https://dropstrike.onrender.com/assets/og-image.png">
+
+  <!-- Google AdSense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-YOUR_PUBLISHER_ID" crossorigin="anonymous"></script>
+
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Custom Styling -->
-  <link rel="stylesheet" href="style.css?v=40">
+  <link rel="stylesheet" href="style.css?v=54">
   <!-- Socket.io Client -->
   <script src="/socket.io/socket.io.js"></script>
   <!-- Google Identity Services SDK -->
@@ -33,22 +55,40 @@
   <div class="glow-orb" id="orb-2"></div>
   <div class="grid-background"></div>
 
-  <div class="app-container">
+  <div class="page-wrapper-ads">
+    <!-- Left Skyscraper Banner Ad -->
+    <aside class="ad-container-vertical ad-left">
+      <ins class="adsbygoogle"
+           style="display:inline-block;width:160px;height:600px"
+           data-ad-client="ca-pub-YOUR_PUBLISHER_ID"
+           data-ad-slot="YOUR_LEFT_AD_SLOT_ID"></ins>
+      <script>
+           (adsbygoogle = window.adsbygoogle || []).push({});
+      </script>
+    </aside>
+
+    <div class="app-container">
     <!-- Header -->
     <header class="app-header">
       <div class="logo-area">
         <span class="logo-icon">⚡</span>
         <h1 class="logo-text">Drop<span>Strike</span></h1>
       </div>
-      
-      <!-- User Profile Header Section -->
-      <div id="user-header" class="user-header-profile hidden">
-        <img id="user-avatar" src="" alt="Avatar">
-        <div class="user-info">
-          <span id="user-name">User</span>
-          <span id="user-email">email@google.com</span>
+      <div class="header-actions">
+        <!-- Theme Toggle -->
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle Dark Mode">
+          <span class="theme-toggle-icon" id="theme-toggle-icon">🌙</span>
+        </button>
+
+        <!-- User Profile Header Section -->
+        <div id="user-header" class="user-header-profile hidden">
+          <img id="user-avatar" src="" alt="Avatar">
+          <div class="user-info">
+            <span id="user-name">User</span>
+            <span id="user-email">email@google.com</span>
+          </div>
+          <button id="btn-signout" class="btn btn-secondary btn-sm">Sign Out</button>
         </div>
-        <button id="btn-signout" class="btn btn-secondary btn-sm">Sign Out</button>
       </div>
     </header>
 
@@ -359,8 +399,28 @@
         </div>
       </section>
     </main>
+  </div>
+    <!-- Right Skyscraper Banner Ad -->
+    <aside class="ad-container-vertical ad-right">
+      <ins class="adsbygoogle"
+           style="display:inline-block;width:160px;height:600px"
+           data-ad-client="ca-pub-YOUR_PUBLISHER_ID"
+           data-ad-slot="YOUR_RIGHT_AD_SLOT_ID"></ins>
+      <script>
+           (adsbygoogle = window.adsbygoogle || []).push({});
+      </script>
+    </aside>
+  </div>
 
-
+  <!-- Mobile Sticky Bottom Banner Ad -->
+  <div class="ad-container-mobile">
+    <ins class="adsbygoogle"
+         style="display:inline-block;width:320px;height:50px"
+         data-ad-client="ca-pub-YOUR_PUBLISHER_ID"
+         data-ad-slot="YOUR_MOBILE_AD_SLOT_ID"></ins>
+    <script>
+         (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
   </div>
 
   <!-- Custom Confirmation Modal -->
@@ -376,6 +436,6 @@
   </div>
 
   <!-- Main JavaScript application logic -->
-  <script src="app.js?v=40"></script>
+  <script src="app.js?v=45"></script>
 </body>
 </html>
