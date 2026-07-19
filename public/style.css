@@ -105,6 +105,11 @@ body.dark-theme .glow-orb {
   left: 49%; /* Slightly shifted left from exact center, but more right than before */
   transform: translateX(-50%);
   transition: all 1.8s cubic-bezier(0.25, 1, 0.25, 1); /* Slower, majestic slide */
+  pointer-events: none; /* Let clicks pass through empty space */
+}
+
+.logo-area > * {
+  pointer-events: auto; /* Re-enable clicks on actual logo elements */
 }
 
 .app-header.active-mode .logo-area {
@@ -200,6 +205,8 @@ body.dark-theme .glow-orb {
   font-size: 18px;
   transition: all 0.3s ease;
   backdrop-filter: blur(10px);
+  position: relative;
+  z-index: 999;
 }
 .theme-toggle:hover {
   transform: scale(1.05);
