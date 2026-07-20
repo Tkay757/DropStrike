@@ -1877,47 +1877,9 @@ body.receiver-active {
   color: var(--accent-color);
 }
 
-
-/* Page Layout with Side Ads */
-.page-wrapper-ads {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-}
-
-/* Vertical Skyscraper Ad Containers */
-.ad-container-vertical {
-  width: 160px;
-  position: fixed;
-  top: 160px;
-  min-height: 600px;
-  background: var(--panel-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.01);
-  z-index: 10;
-}
-.ad-left {
-  left: 20px;
-}
-.ad-right {
-  right: 20px;
-}
-
-.ad-container-vertical ins {
-  width: 160px;
-  height: 600px;
-  background: rgba(0,0,0,0.01);
-  border-radius: 8px;
-}
-
-/* Mobile Ad Container */
+/* Universal Bottom Banner Ad Container */
 .ad-container-mobile {
-  display: none; /* Hidden by default on desktop */
+  display: flex;
   width: 100%;
   height: 50px;
   background: var(--panel-bg);
@@ -1939,15 +1901,7 @@ body.receiver-active {
   border-radius: 4px;
 }
 
-/* Hide vertical side ads and show mobile ad on smaller tablet and mobile screens */
-@media (max-width: 1300px) {
-  .ad-container-vertical {
-    display: none !important;
-  }
-  .ad-container-mobile {
-    display: flex !important;
-  }
-  .app-container {
-    padding-bottom: 70px; /* Add space so the mobile ad doesn't cover content */
-  }
+/* Ensure content is not blocked by bottom ad */
+.app-container {
+  padding-bottom: 70px;
 }

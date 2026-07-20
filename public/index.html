@@ -31,7 +31,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <!-- Custom Styling -->
-  <link rel="stylesheet" href="style.css?v=55">
+  <link rel="stylesheet" href="style.css?v=23">
   <!-- Socket.io Client -->
   <script src="/socket.io/socket.io.js"></script>
   <!-- Google Identity Services SDK -->
@@ -55,19 +55,7 @@
   <div class="glow-orb" id="orb-2"></div>
   <div class="grid-background"></div>
 
-  <div class="page-wrapper-ads">
-    <!-- Left Skyscraper Banner Ad -->
-    <aside class="ad-container-vertical ad-left">
-      <ins class="adsbygoogle"
-           style="display:inline-block;width:160px;height:600px"
-           data-ad-client="ca-pub-YOUR_PUBLISHER_ID"
-           data-ad-slot="YOUR_LEFT_AD_SLOT_ID"></ins>
-      <script>
-           (adsbygoogle = window.adsbygoogle || []).push({});
-      </script>
-    </aside>
-
-    <div class="app-container">
+  <div class="app-container">
     <!-- Header -->
     <header class="app-header">
       <div class="logo-area">
@@ -175,10 +163,11 @@
               <div style="display: flex; flex-direction: column; gap: 8px;">
                 <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Person Limit</span>
                 <select id="setting-person-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
-                  <option value="2" selected>2 People (1 Sender + 1 Receiver)</option>
-                  <option value="3">3 People (1 Sender + 2 Receivers)</option>
-                  <option value="5">5 People (1 Sender + 4 Receivers)</option>
-                  <option value="10">10 People (1 Sender + 9 Receivers)</option>
+                  <option value="2" selected>1 Receiver</option>
+                  <option value="6">5 Receivers</option>
+                  <option value="11">10 Receivers</option>
+                  <option value="51">50 Receivers</option>
+                  <option value="9999">Unlimited Receivers</option>
                 </select>
               </div>
 
@@ -258,43 +247,9 @@
                    <p>Waiting for a receiver to join using the room PIN...</p>
                  </div>
 
-                 <!-- Receiver Join Request Card -->
-                 <div id="receiver-request-card" class="receiver-request-card hidden" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 16px; padding: 24px; text-align: center; display: flex; flex-direction: column; gap: 15px; align-items: center; width: 100%;">
-                   <div style="font-size: 36px;">👤</div>
-                   <h4 style="font-size: 18px; font-weight: 700; margin: 0;" id="request-receiver-name">Receiver Name</h4>
-                   <p style="color: var(--text-secondary); font-size: 14px; margin: 0;">wants to join your transfer room.</p>
-                   <div style="display: flex; gap: 10px; width: 100%; margin-top: 10px;">
-                     <button id="btn-approve-request" class="btn btn-accent" style="flex: 1; color: #ffffff;">Approve</button>
-                     <button id="btn-reject-request" class="btn btn-danger" style="flex: 1; color: #ffffff;">Reject</button>
-                   </div>
-                 </div>
-
-                 <!-- Receiver profile and progress status -->
-                 <div id="receiver-active-card" class="receiver-active-card hidden">
-                  <div class="receiver-profile-row">
-                    <img id="receiver-dash-avatar" src="" alt="Receiver Avatar">
-                    <div class="receiver-profile-info">
-                      <h4 id="receiver-dash-name">Receiver Name</h4>
-                      <p id="receiver-dash-email">receiver@gmail.com</p>
-                    </div>
-                    <!-- Download Status next to the receiver profile -->
-                    <div class="receiver-download-status-badge" id="receiver-download-badge">
-                      Connecting
-                    </div>
-                  </div>
-                  
-                  <!-- Real-time Download progress details -->
-                  <div class="receiver-download-details">
-                    <span class="details-label">Receiver Download Progress:</span>
-                    <div class="progress-bar-track">
-                      <div class="progress-bar-fill progress-bar-fill-accent" id="receiver-download-progress-fill" style="width: 0%;"></div>
-                    </div>
-                    <div class="progress-meta">
-                      <span id="receiver-download-pct">0%</span>
-                      <span id="receiver-download-text">Waiting to download...</span>
-                    </div>
-                  </div>
-                </div>
+                 <!-- Dynamic Containers for Multiple Receivers -->
+                 <div id="join-requests-container" style="display: flex; flex-direction: column; gap: 10px; width: 100%;"></div>
+                 <div id="active-receivers-container" style="display: flex; flex-direction: column; gap: 10px; width: 100%;"></div>
               </div>
             </div>
           </div>
@@ -400,17 +355,6 @@
       </section>
     </main>
   </div>
-    <!-- Right Skyscraper Banner Ad -->
-    <aside class="ad-container-vertical ad-right">
-      <ins class="adsbygoogle"
-           style="display:inline-block;width:160px;height:600px"
-           data-ad-client="ca-pub-YOUR_PUBLISHER_ID"
-           data-ad-slot="YOUR_RIGHT_AD_SLOT_ID"></ins>
-      <script>
-           (adsbygoogle = window.adsbygoogle || []).push({});
-      </script>
-    </aside>
-  </div>
 
   <!-- Mobile Sticky Bottom Banner Ad -->
   <div class="ad-container-mobile">
@@ -435,7 +379,7 @@
     </div>
   </div>
 
-  <!-- Main JavaScript application logic -->
-  <script src="app.js?v=46"></script>
+  <!-- Main Application Logic -->
+  <script src="app.js?v=24"></script>
 </body>
 </html>

@@ -13,6 +13,8 @@ let senderOffset = 0;
 // WebRTC State Variables
 let peerConnection = null;
 let dataChannel = null;
+let peerConnections = {}; // clientId -> RTCPeerConnection
+let dataChannels = {}; // clientId -> RTCDataChannel
 let receivedChunks = [];
 let receivedSize = 0;
 let fileMetadata = null;
@@ -126,42 +128,50 @@ function initSocket() {
   socket = io();
 
   // Socket: Peer joined my room (I am the sender)
-  socket.on('peer-connected', async ({ receiverProfile }) => {
+  socket.on('peer-connected', async ({ clientSocketId, receiverProfile }) => {
     console.log('Receiver joined room:', receiverProfile);
     
-    // Render receiver profile on sender dashboard
-    document.getElementById('receiver-dash-name').innerText = receiverProfile.name;
-    document.getElementById('receiver-dash-email').innerText = receiverProfile.email;
-    document.getElementById('receiver-dash-avatar').src = receiverProfile.picture || 'https://via.placeholder.com/50';
+    const container = document.getElementById('active-receivers-container');
+    if (container) {
+      const card = document.createElement('div');
+      card.className = 'receiver-active-card';
+      card.id = `receiver-card-${clientSocketId}`;
+      card.innerHTML = `
+        <div class="receiver-profile-row">
+          <img src="${receiverProfile.picture || 'https://via.placeholder.com/50'}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">
+          <div class="receiver-profile-info">
+            <h4 style="margin:0;font-size:16px;">${receiverProfile.name}</h4>
+            <p style="margin:0;font-size:12px;color:var(--text-muted);">${receiverProfile.email}</p>
+          </div>
+          <div class="receiver-download-status-badge" id="badge-${clientSocketId}">Connecting</div>
+        </div>
+      `;
+      container.appendChild(card);
+    }
     
-    const badge = document.getElementById('receiver-download-badge');
-    badge.innerText = 'Connecting';
-    badge.className = 'receiver-download-status-badge'; // reset class
-    
-    document.getElementById('receiver-download-pct').innerText = '0%';
-    document.getElementById('receiver-download-progress-fill').style.width = '0%';
-    document.getElementById('receiver-download-text').innerText = 'Establishing P2P link...';
-
-    // Toggle right column visibility
-    document.getElementById('receiver-placeholder').classList.add('hidden');
-    document.getElementById('receiver-active-card').classList.remove('hidden');
-
-    // Host initializes RTC connection and data channel
-    await initializeRtcConnection(true);
+    await initializeRtcConnection(true, clientSocketId);
   });
 
   // Socket: Peer join request (I am the sender, waiting for approval)
   socket.on('peer-join-request', ({ clientSocketId, receiverProfile }) => {
     console.log('Received join request from:', receiverProfile.name, clientSocketId);
-    pendingClientSocketId = clientSocketId;
-
-    // Render details in the request card
-    document.getElementById('request-receiver-name').innerText = receiverProfile.name;
-
-    // Transition panels
-    document.getElementById('receiver-placeholder').classList.add('hidden');
-    document.getElementById('receiver-active-card').classList.add('hidden');
-    document.getElementById('receiver-request-card').classList.remove('hidden');
+    
+    const container = document.getElementById('join-requests-container');
+    if (!container) return;
+    
+    const card = document.createElement('div');
+    card.id = `request-${clientSocketId}`;
+    card.className = 'receiver-request-card';
+    card.style = 'background: rgba(255,255,255,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 16px; padding: 15px; text-align: center; display: flex; flex-direction: column; gap: 10px; align-items: center; width: 100%;';
+    card.innerHTML = `
+      <h4 style="font-size: 16px; font-weight: 700; margin: 0;">${receiverProfile.name}</h4>
+      <p style="color: var(--text-secondary); font-size: 12px; margin: 0;">wants to join</p>
+      <div style="display: flex; gap: 10px; width: 100%; margin-top: 5px;">
+        <button class="btn btn-accent" style="flex: 1; color: #ffffff; padding: 8px;" onclick="socket.emit('approve-peer', { clientSocketId: '${clientSocketId}' }); this.parentElement.parentElement.remove();">Approve</button>
+        <button class="btn btn-danger" style="flex: 1; color: #ffffff; padding: 8px;" onclick="socket.emit('reject-peer', { clientSocketId: '${clientSocketId}' }); this.parentElement.parentElement.remove();">Reject</button>
+      </div>
+    `;
+    container.appendChild(card);
   });
 
   // Socket: Peer join request canceled (I am the sender, client disconnected)
@@ -219,64 +229,36 @@ function initSocket() {
 
   // Socket: Relay WebRTC signaling messages
   socket.on('signal', async ({ signalData }) => {
-    console.log('[Signaling] Client received signalData:', signalData, 'peerConnection active:', !!peerConnection);
-    if (!peerConnection) return;
+    let pc;
+    if (currentRole === 'sender') {
+      pc = peerConnections[signalData.target];
+    } else {
+      pc = peerConnection;
+    }
     
-    try {
-      if (signalData.sdp) {
-        console.log('Received remote SDP description:', signalData.sdp.type);
-        if (currentRole === 'receiver') {
-          document.getElementById('receiver-connection-status').innerText = `Received SDP offer (${signalData.sdp.type}). Applying description...`;
-        } else {
-          document.getElementById('receiver-download-text').innerText = 'Received SDP answer. Establishing P2P link...';
-        }
-        
-        // Pass plain SDP object directly to setRemoteDescription (safest for cross-browser support)
-        await peerConnection.setRemoteDescription(signalData.sdp);
-        isRemoteDescSet = true;
-        
-        // Process any queued ICE candidates that arrived early
-        while (iceQueue.length > 0) {
-          const candidate = iceQueue.shift();
-          console.log('Processing queued ICE candidate');
-          try {
-            await peerConnection.addIceCandidate(candidate);
-          } catch (candidateErr) {
-            console.error('Failed to add queued candidate:', candidateErr);
-          }
-        }
-        
-        // If we received an offer, we must answer it
-        if (signalData.sdp.type === 'offer') {
-          if (currentRole === 'receiver') {
-            document.getElementById('receiver-connection-status').innerText = 'Generating SDP connection answer...';
-          }
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
+    if (!pc) return;
+
+    if (signalData.sdp) {
+      if (signalData.sdp.type === 'offer') {
+        if (!isRemoteDescSet) {
+          await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+          isRemoteDescSet = true;
           
-          if (currentRole === 'receiver') {
-            document.getElementById('receiver-connection-status').innerText = 'SDP Answer generated. Relaying to sender...';
+          while (iceQueue.length > 0) {
+            await pc.addIceCandidate(iceQueue.shift());
           }
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
           socket.emit('signal', { pin: activePin, signalData: { sdp: answer } });
         }
-      } else if (signalData.ice) {
-        const candidate = signalData.ice;
-        if (isRemoteDescSet) {
-          console.log('Received remote ICE candidate');
-          try {
-            await peerConnection.addIceCandidate(candidate);
-          } catch (candidateErr) {
-            console.error('Failed to add candidate:', candidateErr);
-          }
-        } else {
-          console.log('Queueing remote ICE candidate (SDP not set yet)');
-          iceQueue.push(candidate);
-        }
+      } else if (signalData.sdp.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
       }
-    } catch (err) {
-      console.error('Error handling signalling payload:', err);
-      if (currentRole === 'receiver') {
-        document.getElementById('receiver-connection-status').innerText = 'Signalling error: ' + err.message;
+    } else if (signalData.ice) {
+      if (currentRole === 'sender' || isRemoteDescSet) {
+        await pc.addIceCandidate(new RTCIceCandidate(signalData.ice));
+      } else {
+        iceQueue.push(new RTCIceCandidate(signalData.ice));
       }
     }
   });
@@ -344,103 +326,49 @@ function initSocket() {
 }
 
 // Initialize WebRTC Peer Connection
-async function initializeRtcConnection(isHost) {
-  peerConnection = new RTCPeerConnection(RTC_CONFIG);
+async function initializeRtcConnection(isHost, clientId = null) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  
+  if (isHost && clientId) {
+    peerConnections[clientId] = pc;
+  } else {
+    peerConnection = pc;
+  }
 
-  // Bind WebRTC Diagnostic State Listeners
-  peerConnection.onsignalingstatechange = () => {
-    console.log('RTC Signaling State Change:', peerConnection.signalingState);
-    updateRtcStatesLog();
-  };
-  peerConnection.oniceconnectionstatechange = () => {
-    console.log('RTC ICE Connection State Change:', peerConnection.iceConnectionState);
-    updateRtcStatesLog();
-  };
-  peerConnection.onicegatheringstatechange = () => {
-    console.log('RTC ICE Gathering State Change:', peerConnection.iceGatheringState);
-    updateRtcStatesLog();
-  };
-
-  // Handle ICE Candidates exchange
-  peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      console.log('Gathered local ICE candidate:', event.candidate.candidate);
-      socket.emit('signal', {
-        pin: activePin,
-        signalData: { ice: event.candidate }
-      });
-    } else {
-      console.log('Gathered local ICE candidate: gathering complete');
-    }
-  };
-
-  peerConnection.onconnectionstatechange = () => {
-    console.log('RTC Connection State Change:', peerConnection.connectionState);
-    updateRtcStatesLog();
-    
-    if (peerConnection.connectionState === 'connected') {
-      showNotification('P2P Link established! Transfer started.', 'success');
-    }
-    
-    if (peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
-      if (currentRole === 'sender') {
-        // Clear WebRTC objects but stay in the room
-        if (dataChannel) {
-          dataChannel.close();
-          dataChannel = null;
-        }
-        if (peerConnection) {
-          peerConnection.close();
-          peerConnection = null;
-        }
-        receivedChunks = [];
-        receivedSize = 0;
-        stopSpeedTracker();
-
-        // Reset Left Column UI elements
-        document.getElementById('send-progress-fill').style.width = '0%';
-        document.getElementById('send-progress-pct').innerText = '0%';
-        document.getElementById('send-transfer-speed').innerText = '0 KB/s';
-        document.getElementById('send-time-remaining').innerText = 'Calculating...';
-        document.getElementById('send-bytes-meta').innerText = '0 MB / 0 MB';
-
-        // Reset right column connected peer view
-        document.getElementById('receiver-placeholder').classList.remove('hidden');
-        document.getElementById('receiver-active-card').classList.add('hidden');
-
-        // Reset cancel button text
-        const cancelBtn = document.getElementById('btn-cancel-send');
-        if (cancelBtn) {
-          cancelBtn.innerText = 'Cancel Transfer / Close Room';
-          cancelBtn.className = 'btn btn-danger btn-block';
-        }
-        console.log('WebRTC disconnected on sender. Resetting connection and keeping room open.');
+  pc.onsignalingstatechange = () => console.log('RTC Signaling:', pc.signalingState);
+  pc.oniceconnectionstatechange = () => {
+    console.log('RTC ICE:', pc.iceConnectionState);
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      if (isHost && clientId) {
+        delete peerConnections[clientId];
+        delete dataChannels[clientId];
+        const badge = document.getElementById(`badge-${clientId}`);
+        if (badge) { badge.innerText = 'Disconnected'; badge.style.background = 'red'; }
       } else {
-        // Receiver side: exit to dashboard
         resetTransferState();
-        showNotification('P2P connection disconnected.', 'error');
         showPanel('dashboard');
       }
     }
   };
 
-  if (isHost) {
-    // SENDER: Create data channel
-    dataChannel = peerConnection.createDataChannel('fileTransfer', { ordered: true });
-    setupDataChannelEvents();
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit('signal', { pin: activePin, signalData: { ice: event.candidate, target: clientId } });
+    }
+  };
 
-    // Create SDP Offer
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    socket.emit('signal', {
-      pin: activePin,
-      signalData: { sdp: offer }
-    });
+  if (isHost) {
+    const dc = pc.createDataChannel('fileTransfer', { ordered: true });
+    dataChannels[clientId] = dc;
+    setupDataChannelEvents(dc, clientId);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit('signal', { pin: activePin, signalData: { sdp: offer, target: clientId } });
   } else {
-    // RECEIVER: Listen for incoming data channel
-    peerConnection.ondatachannel = (event) => {
+    pc.ondatachannel = (event) => {
       dataChannel = event.channel;
-      setupDataChannelEvents();
+      setupDataChannelEvents(dataChannel, null);
     };
   }
 }
@@ -1504,26 +1432,6 @@ function renderDashboardFilesList() {
   });
 }
 
-// SENDER: Approve receiver join request
-document.getElementById('btn-approve-request').addEventListener('click', () => {
-  if (pendingClientSocketId) {
-    socket.emit('approve-peer', { clientSocketId: pendingClientSocketId });
-    // Instantly hide request card and show active card
-    document.getElementById('receiver-request-card').classList.add('hidden');
-    document.getElementById('receiver-active-card').classList.remove('hidden');
-  }
-});
-
-// SENDER: Reject receiver join request
-document.getElementById('btn-reject-request').addEventListener('click', () => {
-  if (pendingClientSocketId) {
-    socket.emit('reject-peer', { clientSocketId: pendingClientSocketId });
-    // Instantly hide request card and restore placeholder
-    document.getElementById('receiver-request-card').classList.add('hidden');
-    document.getElementById('receiver-placeholder').classList.remove('hidden');
-    pendingClientSocketId = null;
-  }
-});
 
 // SENDER: Go to Room Settings configuration panel
 document.getElementById('btn-generate-pin').addEventListener('click', () => {
