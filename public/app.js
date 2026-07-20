@@ -395,30 +395,47 @@ function updateRtcStatesLog() {
 }
 
 // Setup RTC Data Channel Listeners
-function setupDataChannelEvents() {
-  if (!dataChannel) return;
+let clientStreams = {}; // { clientId: { offset: 0, fileIndex: 0, reader: new FileReader() } }
 
-  dataChannel.onopen = () => {
-    console.log('WebRTC P2P Data Channel Opened!');
-    if (currentRole === 'sender') {
-      currentFileIndex = 0;
-      completedFilesBytes = 0;
-      senderOffset = 0;
-      startStreamingFile();
+function setupDataChannelEvents(dc, clientId) {
+  if (!dc) return;
+
+  dc.onopen = () => {
+    console.log(`WebRTC P2P Data Channel Opened! Client: ${clientId || 'Host'}`);
+    if (currentRole === 'sender' && clientId) {
+      const badge = document.getElementById(`badge-${clientId}`);
+      if (badge) {
+        badge.innerText = 'Connected';
+        badge.className = 'receiver-download-status-badge status-completed';
+      }
+      
+      // Initialize stream state for this client
+      clientStreams[clientId] = {
+        offset: 0,
+        fileIndex: 0
+      };
+      
+      startStreamingForClient(clientId);
     }
   };
 
-  dataChannel.onclose = () => {
-    console.log('WebRTC Data Channel Closed.');
-    resetTransferState();
+  dc.onclose = () => {
+    console.log(`WebRTC Data Channel Closed. Client: ${clientId || 'Host'}`);
+    if (currentRole === 'sender' && clientId) {
+      delete clientStreams[clientId];
+      const badge = document.getElementById(`badge-${clientId}`);
+      if (badge) { badge.innerText = 'Disconnected'; badge.style.background = 'red'; }
+    } else if (currentRole === 'receiver') {
+      resetTransferState();
+    }
   };
 
-  dataChannel.onerror = (err) => {
+  dc.onerror = (err) => {
     console.error('Data Channel Error:', err);
   };
 
   // Receive packets
-  dataChannel.onmessage = (event) => {
+  dc.onmessage = (event) => {
     if (typeof event.data === 'string') {
       // JSON Metadata / Controls
       try {
@@ -428,7 +445,6 @@ function setupDataChannelEvents() {
           receivedChunks = [];
           receivedSize = 0;
           
-          // Render metadata on receive dashboard
           document.getElementById('sender-meta-filename').innerText = `${fileMetadata.name} (${fileMetadata.fileIndex + 1}/${fileMetadata.totalFiles})`;
           document.getElementById('sender-meta-filesize').innerText = formatBytes(fileMetadata.size);
           document.getElementById('sender-identity-card').classList.remove('hidden');
@@ -438,7 +454,6 @@ function setupDataChannelEvents() {
             transferTitle.innerText = `Downloading (${fileMetadata.fileIndex + 1}/${fileMetadata.totalFiles}): ${fileMetadata.name}`;
           }
 
-          // Switch receiver screen to transfer progress
           showSubStep(views.receiveTransfer, [views.receivePin, views.receiveNegotiate]);
           transferStartTime = Date.now();
           if (!speedInterval) {
@@ -453,7 +468,6 @@ function setupDataChannelEvents() {
           const recSpeed = document.getElementById('receive-transfer-speed');
           if (recSpeed) recSpeed.innerText = '0 KB/s';
           
-          // Change Cancel button to Done (Exit Room)
           const cancelBtn = document.getElementById('btn-cancel-receive');
           if (cancelBtn) {
             cancelBtn.innerText = 'Done (Exit Room)';
@@ -466,68 +480,61 @@ function setupDataChannelEvents() {
           }
         } else if (message.type === 'receiver-progress') {
           // Sender updates download progress of receiver
-          const badge = document.getElementById('receiver-download-badge');
-          badge.innerText = `Downloading (${currentFileIndex + 1}/${selectedFiles.length})`;
-          badge.className = 'receiver-download-status-badge status-downloading';
-
-          document.getElementById('receiver-download-pct').innerText = `${message.percentage}%`;
-          document.getElementById('receiver-download-progress-fill').style.width = `${message.percentage}%`;
-          document.getElementById('receiver-download-text').innerText = `Downloading file ${currentFileIndex + 1}/${selectedFiles.length}...`;
+          if (currentRole === 'sender') {
+             // For multiple receivers, we just update the global layout to show activity
+             const stream = clientStreams[clientId];
+             if (stream) {
+               document.getElementById('receiver-download-pct').innerText = `${message.percentage}%`;
+               document.getElementById('receiver-download-progress-fill').style.width = `${message.percentage}%`;
+               document.getElementById('receiver-download-text').innerText = `Downloading file ${stream.fileIndex + 1}/${selectedFiles.length}...`;
+             }
+          }
         } else if (message.type === 'receiver-complete') {
           // Mark current file status as complete in sender list
-          const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
-          if (statusEl) {
-            statusEl.innerText = 'Completed';
-            statusEl.className = 'file-item-status status-completed';
+          const stream = clientStreams[clientId];
+          if (stream) {
+            const statusEl = document.getElementById(`sender-file-status-${stream.fileIndex}`);
+            if (statusEl) {
+              statusEl.innerText = 'Sent';
+              statusEl.className = 'file-item-status status-completed';
+            }
+            // Move to next file for this client
+            stream.fileIndex++;
+            startStreamingForClient(clientId);
           }
-
-          completedFilesBytes += selectedFiles[currentFileIndex].size;
-          currentFileIndex++;
-          senderOffset = 0;
-
-          // Start sending next file
-          startStreamingFile();
         }
-      } catch (err) {
-        console.error('Failed to parse string command:', err);
+      } catch (e) {
+        console.error('Error parsing signaling message over data channel', e);
       }
     } else {
-      // Binary File Chunk
-      const chunk = event.data;
-      receivedChunks.push(chunk);
-      receivedSize += chunk.byteLength;
-      
-      updateProgressBar('receiver', receivedSize, fileMetadata.size);
-
-      // Periodically report progress to sender
-      if (receivedChunks.length % 50 === 0 || receivedSize === fileMetadata.size) {
-        const pct = Math.min(100, Math.floor((receivedSize / fileMetadata.size) * 100));
-        try {
-          dataChannel.send(JSON.stringify({
-            type: 'receiver-progress',
-            percentage: pct
-          }));
-        } catch (e) {
-          console.error('Failed to send progress update:', e);
-        }
+      // Binary chunk received (Receiver side)
+      if (currentRole === 'receiver') {
+        receivedChunks.push(event.data);
+        receivedSize += event.data.byteLength;
+        updateProgressBar('receiver', receivedSize, fileMetadata.size);
       }
     }
   };
 }
 
-// SENDER: Stream active queued file in chunks
-function startStreamingFile() {
-  if (!selectedFiles || selectedFiles.length === 0 || !dataChannel) return;
+// SENDER: Stream active queued file in chunks for a SPECIFIC client
+function startStreamingForClient(clientId) {
+  if (!selectedFiles || selectedFiles.length === 0) return;
+  const dc = dataChannels[clientId];
+  if (!dc || dc.readyState !== 'open') return;
 
-  if (currentFileIndex >= selectedFiles.length) {
-    console.log('Sender: Sent all file queue queues.');
+  const stream = clientStreams[clientId];
+  if (!stream) return;
+
+  if (stream.fileIndex >= selectedFiles.length) {
+    console.log(`Sender: Sent all files to client ${clientId}`);
     try {
-      dataChannel.send(JSON.stringify({ type: 'all-complete' }));
+      dc.send(JSON.stringify({ type: 'all-complete' }));
     } catch (e) {
       console.error('Failed to send final complete packet:', e);
     }
     
-    // Set sender's final layout states
+    // Set sender's final layout states (Will overwrite for multiple clients, but that's ok for MVP UI)
     const badge = document.getElementById('receiver-download-badge');
     badge.innerText = `Completed`;
     badge.className = 'receiver-download-status-badge status-completed';
@@ -549,11 +556,11 @@ function startStreamingFile() {
     return;
   }
 
-  const activeFile = selectedFiles[currentFileIndex];
-  console.log(`Sender: Streaming file ${currentFileIndex + 1}/${selectedFiles.length}: ${activeFile.name}`);
+  const activeFile = selectedFiles[stream.fileIndex];
+  console.log(`Sender: Streaming file ${stream.fileIndex + 1}/${selectedFiles.length}: ${activeFile.name} to ${clientId}`);
 
   // Mark status as active sending
-  const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
+  const statusEl = document.getElementById(`sender-file-status-${stream.fileIndex}`);
   if (statusEl) {
     statusEl.innerText = 'Sending...';
     statusEl.className = 'file-item-status status-active';
@@ -565,60 +572,62 @@ function startStreamingFile() {
   }
 
   // Send Metadata first
-  dataChannel.send(JSON.stringify({
+  dc.send(JSON.stringify({
     type: 'metadata',
     name: activeFile.name,
     size: activeFile.size,
     mime: activeFile.type,
-    fileIndex: currentFileIndex,
+    fileIndex: stream.fileIndex,
     totalFiles: selectedFiles.length,
     totalQueueSize: totalFilesSize
   }));
 
-  let offset = 0;
-  senderOffset = 0;
+  stream.offset = 0;
   const fileReader = new FileReader();
-
-  dataChannel.bufferedAmountLowThreshold = CHUNK_SIZE * 4;
+  dc.bufferedAmountLowThreshold = CHUNK_SIZE * 4;
 
   const readNextChunk = () => {
-    if (dataChannel.readyState !== 'open') return;
-    if (offset >= activeFile.size) {
-      dataChannel.send(JSON.stringify({ type: 'complete', fileIndex: currentFileIndex }));
-      console.log(`Sender: Completed stream slice for ${activeFile.name}`);
+    if (dc.readyState !== 'open') return;
+    if (stream.offset >= activeFile.size) {
+      dc.send(JSON.stringify({ type: 'complete', fileIndex: stream.fileIndex }));
+      console.log(`Sender: Completed stream slice for ${activeFile.name} to ${clientId}`);
       
       // Keep local progress bar at 100%
       updateProgressBar('sender', activeFile.size, activeFile.size);
-      
-      // Mark current file row status
-      const statusEl = document.getElementById(`sender-file-status-${currentFileIndex}`);
-      if (statusEl) {
-        statusEl.innerText = 'Sent';
-        statusEl.className = 'file-item-status status-completed';
-      }
       return;
     }
 
-    const slice = activeFile.slice(offset, offset + CHUNK_SIZE);
+    const slice = activeFile.slice(stream.offset, stream.offset + CHUNK_SIZE);
     fileReader.readAsArrayBuffer(slice);
   };
 
   fileReader.onload = (e) => {
-    if (dataChannel.readyState !== 'open') return;
+    if (dc.readyState !== 'open') return;
 
     const buffer = e.target.result;
-    dataChannel.send(buffer);
-    offset += buffer.byteLength;
-    senderOffset = offset;
+    dc.send(buffer);
+    stream.offset += buffer.byteLength;
+    
+    // For MVP, just use this client's offset for the global progress bar
+    senderOffset = stream.offset;
+    updateProgressBar('sender', stream.offset, activeFile.size);
 
-    updateProgressBar('sender', offset, activeFile.size);
-
-    if (offset < activeFile.size) {
-      if (dataChannel.bufferedAmount > BUFFER_THRESHOLD) {
-        dataChannel.onbufferedamountlow = () => {
-          dataChannel.onbufferedamountlow = null;
+    if (stream.offset < activeFile.size) {
+      if (dc.bufferedAmount > BUFFER_THRESHOLD) {
+        dc.onbufferedamountlow = () => {
+          dc.onbufferedamountlow = null;
           readNextChunk();
         };
+      } else {
+        setTimeout(readNextChunk, 1);
+      }
+    } else {
+      readNextChunk();
+    }
+  };
+
+  readNextChunk();
+};
       } else {
         setTimeout(readNextChunk, 1);
       }
