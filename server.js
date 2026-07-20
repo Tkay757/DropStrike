@@ -34,7 +34,7 @@ app.get('/active-rooms', (req, res) => {
       roomName: room.roomName,
       hostName: room.hostProfile?.name || 'Host',
       hostPicture: room.hostProfile?.picture || null,
-      clientsCount: (room.clientSocketId || room.pendingClientSocketId) ? 1 : 0,
+      clientsCount: Object.keys(room.clients).length,
       personLimit: room.personLimit
     });
   }
@@ -83,9 +83,8 @@ io.on('connection', (socket) => {
         roomId,
         pin,
         hostSocketId: socket.id,
-        clientSocketId: null,
         hostProfile: senderProfile,
-        clientProfile: null,
+        clients: {}, // { socketId: { status: 'pending' | 'approved', profile: ... } }
         timeoutId,
         roomName,
         personLimit,
@@ -112,14 +111,14 @@ io.on('connection', (socket) => {
         return callback({ success: false, error: 'Invalid or expired 6-digit PIN' });
       }
 
-      const limit = room.personLimit || 2;
-      if (room.clientSocketId || room.pendingClientSocketId) {
+      const limit = room.personLimit;
+      const currentCount = Object.keys(room.clients).length;
+      if (limit > 0 && currentCount >= (limit - 1)) { // -1 because limit includes the host
         return callback({ success: false, error: `This room has reached its limit of ${limit} peers.` });
       }
 
-      // Track connection intent by placing them in pending queue
-      room.pendingClientSocketId = socket.id;
-      room.pendingReceiverProfile = receiverProfile;
+      // Track connection intent
+      room.clients[socket.id] = { status: 'pending', profile: receiverProfile };
       socket.currentPin = pin;
 
       console.log(`Receiver requesting to join. PIN: ${pin}, Client: ${socket.id}, Name: ${receiverProfile.name}`);
@@ -149,12 +148,8 @@ io.on('connection', (socket) => {
       const room = activeRooms.get(pin);
       if (!room || room.hostSocketId !== socket.id) return;
 
-      if (room.pendingClientSocketId === clientSocketId) {
-        room.clientSocketId = clientSocketId;
-        room.clientProfile = room.pendingReceiverProfile;
-        
-        room.pendingClientSocketId = null;
-        room.pendingReceiverProfile = null;
+      if (room.clients[clientSocketId] && room.clients[clientSocketId].status === 'pending') {
+        room.clients[clientSocketId].status = 'approved';
 
         const clientSocket = io.sockets.sockets.get(clientSocketId);
         if (clientSocket) {
@@ -170,9 +165,10 @@ io.on('connection', (socket) => {
           roomName: room.roomName
         });
 
-        // Notify host to begin RTC connection negotiation
+        // Notify host to begin RTC connection negotiation with THIS specific client
         socket.emit('peer-connected', {
-          receiverProfile: room.clientProfile
+          clientSocketId,
+          receiverProfile: room.clients[clientSocketId].profile
         });
       }
     } catch (err) {
@@ -187,9 +183,8 @@ io.on('connection', (socket) => {
       const room = activeRooms.get(pin);
       if (!room || room.hostSocketId !== socket.id) return;
 
-      if (room.pendingClientSocketId === clientSocketId) {
-        room.pendingClientSocketId = null;
-        room.pendingReceiverProfile = null;
+      if (room.clients[clientSocketId] && room.clients[clientSocketId].status === 'pending') {
+        delete room.clients[clientSocketId];
 
         console.log(`Host rejected peer: ${clientSocketId}`);
 
@@ -211,12 +206,17 @@ io.on('connection', (socket) => {
     }
 
     // Send the signal to the opposite peer
-    const targetSocketId = (socket.id === room.hostSocketId) 
-      ? room.clientSocketId 
-      : room.hostSocketId;
+    // If sender, we need to know WHICH receiver to send to.
+    let targetSocketId = null;
+    if (socket.id === room.hostSocketId) {
+      targetSocketId = signalData.target; // Sender MUST specify target
+    } else {
+      targetSocketId = room.hostSocketId; // Receiver always sends to Host
+      signalData.target = socket.id; // Tell host who sent it
+    }
 
     const signalType = signalData.sdp ? signalData.sdp.type : (signalData.ice ? 'ICE' : 'Unknown');
-    console.log(`[Signaling] Relaying ${signalType} from ${socket.id} to target: ${targetSocketId} (Host: ${room.hostSocketId}, Client: ${room.clientSocketId})`);
+    console.log(`[Signaling] Relaying ${signalType} from ${socket.id} to target: ${targetSocketId}`);
 
     if (targetSocketId) {
       io.to(targetSocketId).emit('signal', { signalData });
@@ -249,43 +249,39 @@ function handleLeaveRoom(socket) {
         if (room.timeoutId) {
           clearTimeout(room.timeoutId);
         }
-        // Notify client if they are connected
-        if (room.clientSocketId) {
-          io.to(room.clientSocketId).emit('peer-disconnected', { reason: 'Sender closed the connection' });
-          // Reset client attributes so client cleanups don't reference room
-          const clientSocket = io.sockets.sockets.get(room.clientSocketId);
+        // Notify clients if they are connected
+        Object.keys(room.clients).forEach(clientId => {
+          const clientData = room.clients[clientId];
+          if (clientData.status === 'approved') {
+            io.to(clientId).emit('peer-disconnected', { reason: 'Sender closed the connection' });
+          } else {
+            io.to(clientId).emit('join-rejected', { reason: 'Sender closed the connection' });
+          }
+          const clientSocket = io.sockets.sockets.get(clientId);
           if (clientSocket) {
             clientSocket.leave(room.roomId);
             clientSocket.currentPin = null;
           }
-        }
-        // Notify pending client if they are waiting
-        if (room.pendingClientSocketId) {
-          io.to(room.pendingClientSocketId).emit('join-rejected', { reason: 'Sender closed the connection' });
-          const pendingClientSocket = io.sockets.sockets.get(room.pendingClientSocketId);
-          if (pendingClientSocket) {
-            pendingClientSocket.currentPin = null;
-          }
-        }
+        });
+
         socket.leave(room.roomId);
         socket.currentPin = null;
         activeRooms.delete(pin);
-      } else if (socket.id === room.clientSocketId) {
-        console.log(`Client left room: ${pin}`);
-        // Notify host
-        io.to(room.hostSocketId).emit('peer-disconnected', { reason: 'Receiver disconnected' });
+      } else if (room.clients[socket.id]) {
+        const clientStatus = room.clients[socket.id].status;
+        console.log(`Client left room: ${pin} (Status: ${clientStatus})`);
+        
+        if (clientStatus === 'approved') {
+          // Notify host
+          io.to(room.hostSocketId).emit('peer-disconnected', { reason: 'Receiver disconnected', clientSocketId: socket.id });
+        } else {
+          // Notify host that join request was canceled
+          io.to(room.hostSocketId).emit('peer-join-canceled', { clientSocketId: socket.id });
+        }
+        
         socket.leave(room.roomId);
         socket.currentPin = null;
-        // Reset receiver properties on the active room
-        room.clientSocketId = null;
-        room.clientProfile = null;
-      } else if (socket.id === room.pendingClientSocketId) {
-        console.log(`Pending client left room: ${pin}`);
-        // Notify host that join request was canceled
-        io.to(room.hostSocketId).emit('peer-join-canceled', { clientSocketId: socket.id });
-        socket.currentPin = null;
-        room.pendingClientSocketId = null;
-        room.pendingReceiverProfile = null;
+        delete room.clients[socket.id];
       }
     }
   }
