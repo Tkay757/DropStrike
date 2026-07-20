@@ -1465,53 +1465,59 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
   };
 
   socket.emit('create-room', { senderProfile: currentUser, settings }, (response) => {
-    if (response.success) {
-      activePin = response.pin;
-      currentFileIndex = 0;
-      completedFilesBytes = 0;
-      senderOffset = 0;
-      
-      // Calculate total queue size
-      totalFilesSize = selectedFiles.reduce((acc, file) => acc + file.size, 0);
+    try {
+      if (response.success) {
+        activePin = response.pin;
+        currentFileIndex = 0;
+        completedFilesBytes = 0;
+        senderOffset = 0;
+        
+        // Calculate total queue size
+        totalFilesSize = selectedFiles.reduce((acc, file) => acc + file.size, 0);
 
-      // Update Room Name on Host Dashboard
-      const roomTitleEl = document.getElementById('dash-room-title');
-      if (roomTitleEl) {
-        roomTitleEl.innerText = `Lobby: ${response.roomName}`;
-        roomTitleEl.style.display = 'block';
+        // Update Room Name on Host Dashboard
+        const roomTitleEl = document.getElementById('dash-room-title');
+        if (roomTitleEl) {
+          roomTitleEl.innerText = `Lobby: ${response.roomName}`;
+          roomTitleEl.style.display = 'block';
+        }
+
+        // Update Person Limit on Host Dashboard
+        const peerCountEl = document.getElementById('dash-peer-count');
+        if (peerCountEl) {
+          peerCountEl.innerText = `(0/${response.personLimit - 1} connected)`;
+        }
+
+        // Update UI elements in Sender Dashboard
+        document.getElementById('dash-pin-code').innerText = activePin;
+        renderDashboardFilesList();
+        
+        // Reset upload progress values
+        document.getElementById('send-progress-fill').style.width = '0%';
+        document.getElementById('send-progress-pct').innerText = '0%';
+        document.getElementById('send-transfer-speed').innerText = '0 KB/s';
+        document.getElementById('send-bytes-meta').innerText = `0 Bytes / ${formatBytes(totalFilesSize)}`;
+        document.getElementById('send-time-remaining').innerText = 'Calculating...';
+        
+        // Reset connected peer card to waiting state
+        document.getElementById('receiver-placeholder').classList.remove('hidden');
+        const reqContainer = document.getElementById('join-requests-container');
+        if (reqContainer) reqContainer.innerHTML = '';
+        const actContainer = document.getElementById('active-receivers-container');
+        if (actContainer) actContainer.innerHTML = '';
+        
+        showSubStep(views.sendDashboard, [views.sendSelect, views.sendSettings]);
+        document.body.classList.remove('receiver-active');
+        
+        // Start the countdown timer for the room session based on expiry setting
+        startCountdownTimer(response.expiryLimit);
+      } else {
+        console.error('Failed to create transfer room:', response.error);
+        alert('Failed to create room: ' + response.error);
       }
-
-      // Update Person Limit on Host Dashboard
-      const peerCountEl = document.getElementById('dash-peer-count');
-      if (peerCountEl) {
-        peerCountEl.innerText = `(0/${response.personLimit - 1} connected)`;
-      }
-
-      // Update UI elements in Sender Dashboard
-      document.getElementById('dash-pin-code').innerText = activePin;
-      renderDashboardFilesList();
-      
-      // Reset upload progress values
-      document.getElementById('send-progress-fill').style.width = '0%';
-      document.getElementById('send-progress-pct').innerText = '0%';
-      document.getElementById('send-transfer-speed').innerText = '0 KB/s';
-      document.getElementById('send-bytes-meta').innerText = `0 Bytes / ${formatBytes(totalFilesSize)}`;
-      document.getElementById('send-time-remaining').innerText = 'Calculating...';
-      
-      // Reset connected peer card to waiting state
-      document.getElementById('receiver-placeholder').classList.remove('hidden');
-      const reqContainer = document.getElementById('join-requests-container');
-      if (reqContainer) reqContainer.innerHTML = '';
-      const actContainer = document.getElementById('active-receivers-container');
-      if (actContainer) actContainer.innerHTML = '';
-      
-      showSubStep(views.sendDashboard, [views.sendSelect, views.sendSettings]);
-      document.body.classList.remove('receiver-active');
-      
-      // Start the countdown timer for the room session based on expiry setting
-      startCountdownTimer(response.expiryLimit);
-    } else {
-      console.error('Failed to create transfer room:', response.error);
+    } catch (err) {
+      console.error(err);
+      alert('Error transitioning to dashboard: ' + err.message + '\\n' + err.stack);
     }
   });
 });
