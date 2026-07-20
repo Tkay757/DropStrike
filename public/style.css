@@ -22,17 +22,17 @@
 }
 
 body.dark-theme {
-  --bg-color: #050505; /* Deep, near-OLED Black */
-  --panel-bg: rgba(255, 255, 255, 0.06); /* High-contrast frosted glass */
-  --border-color: rgba(255, 255, 255, 0.15); /* Sharper bright border */
-  --text-primary: #ffffff; /* Pure white */
-  --text-secondary: #e2e8f0; /* Bright silver */
-  --text-muted: #a1a1aa; /* High contrast muted */
+  --bg-color: #0f172a; /* Deep slate / Navy dark */
+  --panel-bg: rgba(30, 41, 59, 0.7); /* Sleek slate glass for capsules */
+  --border-color: rgba(255, 255, 255, 0.1); /* Soft subtle border */
+  --text-primary: #f8fafc; /* Crisp readable white */
+  --text-secondary: #cbd5e1; /* Soft silver */
+  --text-muted: #94a3b8; /* Muted slate */
   
-  /* Stronger, more vibrant glows for higher contrast */
-  --primary-glow: rgba(99, 102, 241, 0.6);
-  --accent-glow: rgba(16, 185, 129, 0.6);
-  --danger-glow: rgba(239, 68, 68, 0.6);
+  /* Adjusted glows for a balanced aesthetic */
+  --primary-glow: rgba(99, 102, 241, 0.4);
+  --accent-glow: rgba(16, 185, 129, 0.4);
+  --danger-glow: rgba(239, 68, 68, 0.4);
 }
 
 * {
