@@ -303,7 +303,10 @@ function initSocket() {
       
       // Reset connected peer details (instantly makes their profile disappear)
       document.getElementById('receiver-placeholder').classList.remove('hidden');
-      document.getElementById('receiver-active-card').classList.add('hidden');
+      const reqContainer = document.getElementById('join-requests-container');
+      if (reqContainer) reqContainer.innerHTML = '';
+      const actContainer = document.getElementById('active-receivers-container');
+      if (actContainer) actContainer.innerHTML = '';
       
       // Reset cancel button text if it was modified
       const cancelBtn = document.getElementById('btn-cancel-send');
@@ -1497,7 +1500,10 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
       
       // Reset connected peer card to waiting state
       document.getElementById('receiver-placeholder').classList.remove('hidden');
-      document.getElementById('receiver-active-card').classList.add('hidden');
+      const reqContainer = document.getElementById('join-requests-container');
+      if (reqContainer) reqContainer.innerHTML = '';
+      const actContainer = document.getElementById('active-receivers-container');
+      if (actContainer) actContainer.innerHTML = '';
       
       showSubStep(views.sendDashboard, [views.sendSelect, views.sendSettings]);
       document.body.classList.remove('receiver-active');
