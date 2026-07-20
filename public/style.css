@@ -25,9 +25,9 @@ body.dark-theme {
   --bg-color: #0f172a; /* Deep slate / Navy dark */
   --panel-bg: rgba(30, 41, 59, 0.7); /* Sleek slate glass for capsules */
   --border-color: rgba(255, 255, 255, 0.1); /* Soft subtle border */
-  --text-primary: #f8fafc; /* Crisp readable white */
-  --text-secondary: #cbd5e1; /* Soft silver */
-  --text-muted: #94a3b8; /* Muted slate */
+  --text-primary: #00FF41; /* Bright Matrix Green */
+  --text-secondary: #008F11; /* Classic Matrix Green */
+  --text-muted: #03A062; /* Dimmer Terminal Green */
   
   /* Adjusted glows for a balanced aesthetic */
   --primary-glow: rgba(99, 102, 241, 0.4);
