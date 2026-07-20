@@ -628,16 +628,6 @@ function startStreamingForClient(clientId) {
 
   readNextChunk();
 };
-      } else {
-        setTimeout(readNextChunk, 1);
-      }
-    } else {
-      readNextChunk();
-    }
-  };
-
-  readNextChunk();
-}
 
 // RECEIVER: Combine binary chunks and download
 function finalizeReceivedFile() {
