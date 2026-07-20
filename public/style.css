@@ -21,21 +21,6 @@
   --danger-glow: rgba(220, 38, 38, 0.15);
 }
 
-body.dark-theme {
-  --bg-color: #0f172a; /* Deep slate / Navy dark */
-  --panel-bg: rgba(30, 41, 59, 0.7); /* Sleek slate glass for capsules */
-  --border-color: rgba(255, 255, 255, 0.1); /* Soft subtle border */
-  --text-primary: #00FF41; /* Bright Matrix Green */
-  --text-secondary: #008F11; /* Classic Matrix Green */
-  --text-muted: #03A062; /* Dimmer Terminal Green */
-  
-  /* Adjusted glows for a balanced aesthetic */
-  --primary-glow: rgba(99, 102, 241, 0.4);
-  --accent-glow: rgba(16, 185, 129, 0.4);
-  --danger-glow: rgba(239, 68, 68, 0.4);
-}
-
-* {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -55,17 +40,9 @@ body {
 /* Atmospheric Background Effects - Hidden for Solid White look */
 .grid-background {
   display: none;
-}
-body.dark-theme .grid-background {
-  display: block;
-}
 
 .glow-orb {
   display: none;
-}
-body.dark-theme .glow-orb {
-  display: block;
-}
 
 .app-container {
   width: 97%;
@@ -214,9 +191,6 @@ body.dark-theme .glow-orb {
 }
 .theme-toggle-icon {
   transition: transform 0.5s cubic-bezier(0.25, 1.5, 0.5, 1);
-}
-body.dark-theme .theme-toggle-icon {
-  transform: rotate(360deg);
 }
 
 /* Google Identity User Card */
