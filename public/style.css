@@ -1184,7 +1184,7 @@ body {
 .timer-countdown-val {
   font-size: 22px;
   font-weight: 700;
-  color: #f3f4f6;
+  color: var(--text-primary);
 }
 
 .receiver-placeholder-card {
