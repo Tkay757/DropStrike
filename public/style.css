@@ -41,9 +41,11 @@ body {
 /* Atmospheric Background Effects - Hidden for Solid White look */
 .grid-background {
   display: none;
+}
 
 .glow-orb {
   display: none;
+}
 
 .app-container {
   width: 97%;
