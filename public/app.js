@@ -29,7 +29,101 @@ let iceQueue = [];
 let isRemoteDescSet = false;
 let pendingClientSocketId = null;
 
-// Configuration
+
+// ----------------------------------------
+// Sound Engine (Procedural Web Audio API)
+// ----------------------------------------
+window.appIsActiveSession = false;
+
+const SoundEngine = {
+  ctx: null,
+  init: function() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  },
+  playClick: function() {
+    this.init();
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.05);
+  },
+  playSuccess: function() {
+    this.init();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    
+    // First chime
+    const osc1 = this.ctx.createOscillator();
+    const gain1 = this.ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(523.25, t); // C5
+    gain1.gain.setValueAtTime(0, t);
+    gain1.gain.linearRampToValueAtTime(0.3, t + 0.05);
+    gain1.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
+    osc1.connect(gain1);
+    gain1.connect(this.ctx.destination);
+    osc1.start(t);
+    osc1.stop(t + 0.4);
+    
+    // Second chime
+    const osc2 = this.ctx.createOscillator();
+    const gain2 = this.ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(783.99, t + 0.15); // G5
+    gain2.gain.setValueAtTime(0, t + 0.15);
+    gain2.gain.linearRampToValueAtTime(0.3, t + 0.2);
+    gain2.gain.exponentialRampToValueAtTime(0.01, t + 0.6);
+    osc2.connect(gain2);
+    gain2.connect(this.ctx.destination);
+    osc2.start(t + 0.15);
+    osc2.stop(t + 0.6);
+  },
+  playError: function() {
+    this.init();
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(150, this.ctx.currentTime + 0.3);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.3);
+  }
+};
+
+// Global click listener for buttons to play click sound
+document.addEventListener('click', (e) => {
+  if (e.target.closest('button') || e.target.closest('.btn')) {
+    SoundEngine.playClick();
+  }
+});
+
+// Refresh/Close Warning for Active Sessions
+window.addEventListener('beforeunload', (e) => {
+  if (window.appIsActiveSession) {
+    e.preventDefault();
+    e.returnValue = ''; // Standard way to trigger warning
+  }
+});
+// ----------------------------------------
+\n// Configuration
 const CHUNK_SIZE = 16384; // 16KB
 const BUFFER_THRESHOLD = 1048576; // 1MB
 const RTC_CONFIG = {
@@ -732,7 +826,7 @@ function getSenderOffset() {
 }
 
 // Reset connections and speeds
-function resetTransferState() {
+function resetTransferState() {\n  window.appIsActiveSession = false;
   stopSpeedTracker();
 
   // Reset pending state references
@@ -991,13 +1085,18 @@ function renderLobbiesList(rooms, count) {
       ${badgeHtml}
     `;
     
+    if (window.selectedLobbyRoomName && window.selectedLobbyRoomName === room.roomName) {
+      item.classList.add('selected');
+    }
+    
     if (!isFull) {
       item.onclick = () => {
         // Deselect all items
         document.querySelectorAll('.lobby-item').forEach(el => el.classList.remove('selected'));
         item.classList.add('selected');
+        window.selectedLobbyRoomName = room.roomName; // Remember selection
         
-        // Focus PIN inputs
+        // Focus PIN inputs or Name
         const firstInput = document.querySelector('.pin-box');
         if (firstInput) firstInput.focus();
       };
@@ -1478,7 +1577,7 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
         const roomTitleEl = document.getElementById('dash-room-title');
         if (roomTitleEl) {
           roomTitleEl.innerText = `Lobby: ${response.roomName}`;
-          roomTitleEl.style.display = 'block';
+          roomTitleEl.style.display = 'block';\n          window.appIsActiveSession = true;\n          SoundEngine.playSuccess();
         }
 
         // Update Person Limit on Host Dashboard
@@ -1604,7 +1703,7 @@ document.getElementById('btn-connect-pin').addEventListener('click', async () =>
     if (response.success) {
       if (response.status === 'waiting_approval') {
         console.log('Join request sent, waiting for host approval...');
-        const statusText = response.roomName 
+        window.appIsActiveSession = true;\n        SoundEngine.playSuccess();\n        const statusText = response.roomName 
           ? `Waiting for host of "${response.roomName}" to approve connection...` 
           : 'Waiting for room host to approve connection...';
         document.getElementById('receiver-connection-status').innerText = statusText;
