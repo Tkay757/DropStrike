@@ -123,7 +123,8 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 // ----------------------------------------
-\n// Configuration
+
+// Configuration
 const CHUNK_SIZE = 16384; // 16KB
 const BUFFER_THRESHOLD = 1048576; // 1MB
 const RTC_CONFIG = {
@@ -826,7 +827,8 @@ function getSenderOffset() {
 }
 
 // Reset connections and speeds
-function resetTransferState() {\n  window.appIsActiveSession = false;
+function resetTransferState() {
+  window.appIsActiveSession = false;
   stopSpeedTracker();
 
   // Reset pending state references
@@ -1577,7 +1579,9 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
         const roomTitleEl = document.getElementById('dash-room-title');
         if (roomTitleEl) {
           roomTitleEl.innerText = `Lobby: ${response.roomName}`;
-          roomTitleEl.style.display = 'block';\n          window.appIsActiveSession = true;\n          SoundEngine.playSuccess();
+          roomTitleEl.style.display = 'block';
+          window.appIsActiveSession = true;
+          SoundEngine.playSuccess();
         }
 
         // Update Person Limit on Host Dashboard
@@ -1703,7 +1707,9 @@ document.getElementById('btn-connect-pin').addEventListener('click', async () =>
     if (response.success) {
       if (response.status === 'waiting_approval') {
         console.log('Join request sent, waiting for host approval...');
-        window.appIsActiveSession = true;\n        SoundEngine.playSuccess();\n        const statusText = response.roomName 
+        window.appIsActiveSession = true;
+        SoundEngine.playSuccess();
+        const statusText = response.roomName 
           ? `Waiting for host of "${response.roomName}" to approve connection...` 
           : 'Waiting for room host to approve connection...';
         document.getElementById('receiver-connection-status').innerText = statusText;
