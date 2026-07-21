@@ -68,7 +68,14 @@ io.on('connection', (socket) => {
       const pin = generateUniquePIN();
       const roomId = `room-${Math.random().toString(36).substr(2, 9)}`;
       
-      const roomName = settings?.roomName || `Room ${pin}`;
+      const generateRandomName = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        let str = '';
+        for(let i=0; i<4; i++) str += chars.charAt(Math.floor(Math.random() * chars.length));
+        return `Lobby-${str}`;
+      };
+      
+      const roomName = (settings && settings.roomName && settings.roomName.trim() !== '') ? settings.roomName.trim() : generateRandomName();
       const personLimit = parseInt(settings?.personLimit) || 2; // Host + Guests
       const expiryLimit = parseInt(settings?.expiryLimit) || 1; // minutes
       
