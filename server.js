@@ -35,7 +35,9 @@ app.get('/active-rooms', (req, res) => {
       hostName: room.hostProfile?.name || 'Host',
       hostPicture: room.hostProfile?.picture || null,
       clientsCount: Object.keys(room.clients).length,
-      personLimit: room.personLimit
+      personLimit: room.personLimit,
+      visibility: room.visibility,
+      pin: room.visibility === 'private' ? null : pin // Hide PIN if private
     });
   }
   res.json({
@@ -78,13 +80,17 @@ io.on('connection', (socket) => {
       const roomName = (settings && settings.roomName && settings.roomName.trim() !== '') ? settings.roomName.trim() : generateRandomName();
       const personLimit = parseInt(settings?.personLimit) || 2; // Host + Guests
       const expiryLimit = parseInt(settings?.expiryLimit) || 1; // minutes
+      const visibility = settings?.visibility || 'public';
       
       // Setup room expiry timeout
-      const timeoutId = setTimeout(() => {
-        console.log(`Room ${pin} expired after ${expiryLimit} minute(s).`);
-        io.to(roomId).emit('room-expired');
-        activeRooms.delete(pin);
-      }, expiryLimit * 60 * 1000);
+      let timeoutId = null;
+      if (expiryLimit !== 9999) {
+        timeoutId = setTimeout(() => {
+          console.log(`Room ${pin} expired after ${expiryLimit} minute(s).`);
+          io.to(roomId).emit('room-expired');
+          activeRooms.delete(pin);
+        }, expiryLimit * 60 * 1000);
+      }
       
       const roomData = {
         roomId,
@@ -95,7 +101,8 @@ io.on('connection', (socket) => {
         timeoutId,
         roomName,
         personLimit,
-        expiryLimit
+        expiryLimit,
+        visibility
       };
 
       activeRooms.set(pin, roomData);
@@ -124,24 +131,42 @@ io.on('connection', (socket) => {
         return callback({ success: false, error: `This room has reached its limit of ${limit} peers.` });
       }
 
-      // Track connection intent
-      room.clients[socket.id] = { status: 'pending', profile: receiverProfile };
-      socket.currentPin = pin;
+      if (room.visibility === 'public') {
+        // Auto-approve logic for public rooms
+        room.clients[socket.id] = { status: 'approved', profile: receiverProfile };
+        socket.currentPin = pin;
+        socket.join(room.roomId);
 
-      console.log(`Receiver requesting to join. PIN: ${pin}, Client: ${socket.id}, Name: ${receiverProfile.name}`);
+        console.log(`Auto-approving receiver. PIN: ${pin}, Client: ${socket.id}`);
 
-      // Alert host of request
-      io.to(room.hostSocketId).emit('peer-join-request', {
-        clientSocketId: socket.id,
-        receiverProfile
-      });
+        // Notify receiver
+        io.to(socket.id).emit('join-approved', {
+          roomId: room.roomId,
+          senderProfile: room.hostProfile,
+          roomName: room.roomName
+        });
 
-      // Respond that they are in the waiting lobby
-      callback({
-        success: true,
-        status: 'waiting_approval',
-        roomName: room.roomName
-      });
+        // Notify host
+        io.to(room.hostSocketId).emit('peer-connected', {
+          clientSocketId: socket.id,
+          receiverProfile
+        });
+
+        callback({ success: true, status: 'auto_approved', roomName: room.roomName });
+      } else {
+        // Private room logic: requires approval
+        room.clients[socket.id] = { status: 'pending', profile: receiverProfile };
+        socket.currentPin = pin;
+
+        console.log(`Receiver requesting to join Private room. PIN: ${pin}, Client: ${socket.id}`);
+
+        io.to(room.hostSocketId).emit('peer-join-request', {
+          clientSocketId: socket.id,
+          receiverProfile
+        });
+
+        callback({ success: true, status: 'waiting_approval', roomName: room.roomName });
+      }
     } catch (err) {
       console.error('Error joining room:', err);
       callback({ success: false, error: 'Internal Server Error' });
