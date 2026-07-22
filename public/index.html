@@ -154,26 +154,51 @@
                 <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Name (Optional)</span>
                 <input type="text" id="setting-room-name" class="input-field" placeholder="e.g. Physics Lab Session" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none;">
               </div>
-
-              <!-- Person Limit -->
-              <div style="display: flex; flex-direction: column; gap: 8px;">
-                <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Person Limit</span>
-                <select id="setting-person-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
-                  <option value="2" selected>1 Receiver</option>
-                  <option value="6">5 Receivers</option>
-                  <option value="11">10 Receivers</option>
-                  <option value="51">50 Receivers</option>
-                  <option value="9999">Unlimited Receivers</option>
-                </select>
+              
+              <!-- Custom PIN & Visibility Container -->
+              <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <!-- Custom PIN -->
+                <div style="display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px;">
+                  <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Custom PIN (Optional)</span>
+                  <input type="text" id="setting-custom-pin" class="input-field" placeholder="e.g. DROP123" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; text-transform: uppercase;">
+                </div>
+                <!-- Visibility -->
+                <div style="display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px;">
+                  <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Visibility on Radar</span>
+                  <select id="setting-visibility" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
+                    <option value="public" selected>Public (Visible to All)</option>
+                    <option value="private">Private (Hidden)</option>
+                  </select>
+                </div>
               </div>
 
-              <!-- Expiry Limit -->
-              <div style="display: flex; flex-direction: column; gap: 8px;">
-                <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Expiry Limit</span>
-                <select id="setting-expiry-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
-                  <option value="1" selected>1 Minute</option>
-                  <option value="5">5 Minutes</option>
-                  <option value="10">10 Minutes</option>
+              <!-- Person Limit & Expiry Limit Container -->
+              <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                <!-- Person Limit -->
+                <div style="display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px;">
+                  <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Person Limit</span>
+                  <select id="setting-person-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
+                    <option value="2" selected>1 Receiver</option>
+                    <option value="6">5 Receivers</option>
+                    <option value="11">10 Receivers</option>
+                    <option value="51">50 Receivers</option>
+                    <option value="9999">Unlimited Receivers</option>
+                  </select>
+                </div>
+
+                <!-- Expiry Limit -->
+                <div style="display: flex; flex-direction: column; gap: 8px; flex: 1; min-width: 200px;">
+                  <span class="details-label" style="font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-muted);">Room Expiry Limit</span>
+                  <select id="setting-expiry-limit" style="width: 100%; padding: 14px 18px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 12px; font-size: 16px; background: rgba(255, 255, 255, 0.7); color: var(--text-primary); outline: none; font-family: inherit;">
+                    <option value="1" selected>1 Minute</option>
+                    <option value="5">5 Minutes</option>
+                    <option value="10">10 Minutes</option>
+                    <option value="30">30 Minutes</option>
+                    <option value="60">1 Hour</option>
+                    <option value="9999">Endless (No Limit)</option>
+                  </select>
+                </div>
+              </div>
                   <option value="30">30 Minutes</option>
                   <option value="60">1 Hour</option>
                 </select>
@@ -376,6 +401,6 @@
   </div>
 
   <!-- Main Application Logic -->
-  <script src="app.js?v=36"></script>
+  <script src="app.js?v=37"></script>
 </body>
 </html>

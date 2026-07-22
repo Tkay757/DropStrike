@@ -1005,6 +1005,11 @@ function startCountdownTimer(expiryMinutes) {
   const label = document.getElementById('dash-countdown-val');
   if (countdownInterval) clearInterval(countdownInterval);
 
+  if (expiryMinutes === 9999) {
+    if (label) label.innerHTML = '<span style="font-size: 24px;">&infin;</span>';
+    return; // Do not set an interval
+  }
+
   let timeLeft = (expiryMinutes || 1) * 60; // minutes to seconds
   if (label) {
     label.innerText = `${(expiryMinutes || 1).toString().padStart(2, '0')}:00`;
@@ -1017,13 +1022,10 @@ function startCountdownTimer(expiryMinutes) {
       showNotification(`The room has expired (${expiryMinutes || 1}-minute limit reached).`, 'error');
       resetTransferState();
       showPanel('dashboard');
-      return;
-    }
-
-    const minutes = Math.floor(timeLeft / 60);
-    const seconds = timeLeft % 60;
-    if (label) {
-      label.innerText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+      const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+      const s = (timeLeft % 60).toString().padStart(2, '0');
+      if (label) label.innerText = `${m}:${s}`;
     }
   }, 1000);
 }
@@ -1590,11 +1592,15 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
   const roomName = document.getElementById('setting-room-name').value.trim();
   const personLimit = parseInt(document.getElementById('setting-person-limit').value) || 2;
   const expiryLimit = parseInt(document.getElementById('setting-expiry-limit').value) || 1;
+  const customPin = document.getElementById('setting-custom-pin').value.trim().toUpperCase();
+  const visibility = document.getElementById('setting-visibility').value;
 
   const settings = {
     roomName,
     personLimit,
-    expiryLimit
+    expiryLimit,
+    customPin,
+    visibility
   };
 
   socket.emit('create-room', { senderProfile: currentUser, settings }, (response) => {
