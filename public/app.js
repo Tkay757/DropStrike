@@ -129,7 +129,23 @@ const CHUNK_SIZE = 16384; // 16KB
 const BUFFER_THRESHOLD = 1048576; // 1MB
 const RTC_CONFIG = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ],
   iceCandidatePoolSize: 10
 };
@@ -222,6 +238,17 @@ function initSocket() {
   
   socket = io();
 
+  // Socket: Local client disconnected from server (Network drop)
+  socket.on('disconnect', () => {
+    console.warn('Socket disconnected from server.');
+    if (currentRole === 'receiver' && document.getElementById('receive-step-negotiate').classList.contains('hidden') === false) {
+      // If receiver was stuck waiting for approval or negotiating and lost connection
+      resetTransferState();
+      showNotification('Connection to server lost. Please try rejoining the room.', 'error');
+      showPanel('dashboard');
+    }
+  });
+
   // Socket: Peer joined my room (I am the sender)
   socket.on('peer-connected', async ({ clientSocketId, receiverProfile }) => {
     console.log('Receiver joined room:', receiverProfile);
@@ -272,9 +299,15 @@ function initSocket() {
   // Socket: Peer join request canceled (I am the sender, client disconnected)
   socket.on('peer-join-canceled', ({ clientSocketId }) => {
     console.log('Peer join request canceled by client:', clientSocketId);
-    if (pendingClientSocketId === clientSocketId) {
-      pendingClientSocketId = null;
-      document.getElementById('receiver-request-card').classList.add('hidden');
+    const card = document.getElementById(`request-${clientSocketId}`);
+    if (card) {
+      card.remove();
+    }
+    
+    // Check if container is empty to show placeholder again
+    const container = document.getElementById('join-requests-container');
+    const actContainer = document.getElementById('active-receivers-container');
+    if (container && container.children.length === 0 && actContainer && actContainer.children.length === 0) {
       document.getElementById('receiver-placeholder').classList.remove('hidden');
     }
   });
