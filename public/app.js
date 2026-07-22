@@ -1101,6 +1101,7 @@ function renderLobbiesList(rooms, count) {
   listEl.innerHTML = '';
   rooms.forEach(room => {
     const isFull = room.clientsCount >= (room.personLimit - 1);
+    const isPrivate = room.visibility === 'private';
     
     const item = document.createElement('div');
     item.className = `lobby-item ${isFull ? 'full' : ''}`;
@@ -1109,9 +1110,14 @@ function renderLobbiesList(rooms, count) {
       ? `<img src="${room.hostPicture}" class="lobby-avatar" style="object-fit: cover;">`
       : `<div class="lobby-avatar">🎮</div>`;
       
-    const badgeHtml = isFull 
-      ? `<span class="lobby-badge badge-full">Full</span>`
-      : `<span class="lobby-badge badge-private">🔒 Private</span>`;
+    let badgeHtml = '';
+    if (isFull) {
+      badgeHtml = `<span class="lobby-badge badge-full">Full</span>`;
+    } else if (isPrivate) {
+      badgeHtml = `<span class="lobby-badge badge-private" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;">🔒 Private</span>`;
+    } else {
+      badgeHtml = `<span class="lobby-badge badge-public" style="background: rgba(34, 197, 94, 0.1); color: #22c55e;">🌐 Public</span>`;
+    }
       
     item.innerHTML = `
       ${avatarHtml}
@@ -1133,9 +1139,31 @@ function renderLobbiesList(rooms, count) {
         item.classList.add('selected');
         window.selectedLobbyRoomName = room.roomName; // Remember selection
         
-        // Focus PIN inputs or Name
-        const firstInput = document.querySelector('.pin-box');
-        if (firstInput) firstInput.focus();
+        if (isPrivate) {
+          showNotification('This room is private. Please enter the host PIN manually.', 'info');
+          const firstInput = document.querySelector('.pin-box');
+          if (firstInput) {
+            firstInput.value = '';
+            firstInput.focus();
+          }
+        } else if (room.pin) {
+          // Public room auto-join
+          const pinStr = String(room.pin);
+          const pinBoxes = document.querySelectorAll('.pin-box');
+          pinBoxes.forEach((box, i) => {
+            if (pinStr[i]) {
+              box.value = pinStr[i];
+            }
+          });
+          
+          showNotification(`Auto-joining public room: ${room.roomName}`, 'success');
+          
+          // Trigger the 'input' event on the last box to auto-submit
+          if (pinBoxes.length > 0) {
+            const lastBox = pinBoxes[pinBoxes.length - 1];
+            lastBox.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
       };
     }
     
@@ -1592,14 +1620,12 @@ document.getElementById('btn-confirm-room').addEventListener('click', () => {
   const roomName = document.getElementById('setting-room-name').value.trim();
   const personLimit = parseInt(document.getElementById('setting-person-limit').value) || 2;
   const expiryLimit = parseInt(document.getElementById('setting-expiry-limit').value) || 1;
-  const customPin = document.getElementById('setting-custom-pin').value.trim().toUpperCase();
   const visibility = document.getElementById('setting-visibility').value;
 
   const settings = {
     roomName,
     personLimit,
     expiryLimit,
-    customPin,
     visibility
   };
 
