@@ -477,7 +477,12 @@ async function initializeRtcConnection(isHost, clientId = null) {
         if (badge) { badge.innerText = 'Disconnected'; badge.style.background = 'red'; }
       } else {
         resetTransferState();
-        showPanel('dashboard');
+        showSubStep(views.receivePin, [views.receiveNegotiate, views.receiveTransfer]);
+        const errorMsgEl = document.getElementById('receive-error-msg');
+        if (errorMsgEl) {
+          errorMsgEl.innerText = 'WebRTC P2P connection failed. Your network firewall or browser extension may be blocking P2P traffic.';
+          errorMsgEl.classList.remove('hidden');
+        }
       }
     }
   };
