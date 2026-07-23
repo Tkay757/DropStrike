@@ -1149,10 +1149,10 @@ function renderLobbiesList(rooms, count) {
         
         if (isPrivate) {
           showNotification('This room is private. Please enter the host PIN manually.', 'info');
-          const firstInput = document.querySelector('.pin-box');
-          if (firstInput) {
-            firstInput.value = '';
-            firstInput.focus();
+          const pinBoxes = document.querySelectorAll('.pin-box');
+          pinBoxes.forEach(box => box.value = '');
+          if (pinBoxes.length > 0) {
+            pinBoxes[0].focus();
           }
         } else if (room.pin) {
           // Public room auto-join
