@@ -278,6 +278,9 @@ function initSocket() {
   socket.on('peer-join-request', ({ clientSocketId, receiverProfile }) => {
     console.log('Received join request from:', receiverProfile.name, clientSocketId);
     
+    const placeholder = document.getElementById('receiver-placeholder');
+    if (placeholder) placeholder.classList.add('hidden');
+
     const container = document.getElementById('join-requests-container');
     if (!container) return;
     
