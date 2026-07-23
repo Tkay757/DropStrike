@@ -1255,7 +1255,9 @@ function initGoogleSignIn(clientId) {
     if (googleLoginBtn) {
       googleLoginBtn.onclick = (e) => {
         e.stopPropagation();
+        showNotification('Attempting Google Login...', 'info');
         if (tokenClient) {
+          showNotification('Google Client ready, opening popup...', 'success');
           tokenClient.requestAccessToken();
         } else {
           showAuthError('Google Client is not ready.');
